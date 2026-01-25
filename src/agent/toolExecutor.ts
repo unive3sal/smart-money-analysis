@@ -42,23 +42,34 @@ export async function executeTool(
 
     switch (toolName) {
       case "fetch_top_traders": {
-        const timeframe = (args.timeframe as "24h" | "7d" | "30d") || "24h";
-        const limit = Math.min(Number(args.limit) || 20, 50);
+        // Validate timeframe - Birdeye only accepts: 30m, 1h, 2h, 4h, 6h, 8h, 12h, 24h
+        const rawTimeframe = String(args.timeframe || "24h").toLowerCase();
+        const validTimeframes = ["30m", "1h", "2h", "4h", "6h", "8h", "12h", "24h"] as const;
+        const timeframe = validTimeframes.includes(rawTimeframe as typeof validTimeframes[number]) 
+          ? (rawTimeframe as typeof validTimeframes[number])
+          : "24h";
+        // Birdeye API limit is 1-10 for top_traders endpoint
+        const limit = Math.min(Number(args.limit) || 10, 10);
+        // Default to wrapped SOL token
+        const tokenAddress = (args.tokenAddress as string) || "So11111111111111111111111111111111111111112";
 
-        const traders = await birdeye.getTopTraders(timeframe, limit);
+        const traders = await birdeye.getTopTraders(tokenAddress, timeframe, limit);
 
         return {
           success: true,
           data: {
+            tokenAddress,
             timeframe,
             count: traders.length,
             traders: traders.map((t) => ({
-              address: t.address,
-              pnl: t.pnl,
-              pnlPercent: t.pnlPercent,
-              winRate: t.winRate,
-              tradeCount: t.tradeCount,
+              owner: t.owner,
               volume: t.volume,
+              trade: t.trade,
+              tradeBuy: t.tradeBuy,
+              tradeSell: t.tradeSell,
+              volumeBuy: t.volumeBuy,
+              volumeSell: t.volumeSell,
+              tags: t.tags,
             })),
           },
         };
@@ -75,20 +86,23 @@ export async function executeTool(
           birdeye.getWalletTransactions(walletAddress, 50),
         ]);
 
+        // Calculate total value from items
+        const totalValueUsd = portfolio.items.reduce((sum, item) => sum + (item.valueUsd || 0), 0);
+
         return {
           success: true,
           data: {
             wallet: walletAddress,
-            totalValueUsd: portfolio.totalUsd,
+            totalValueUsd,
             holdingsCount: portfolio.items.length,
             topHoldings: portfolio.items.slice(0, 10).map((t) => ({
               symbol: t.symbol,
               valueUsd: t.valueUsd,
               balance: t.uiAmount,
             })),
-            recentTransactions: transactions.items.slice(0, 10).map((tx) => ({
+            recentTransactions: transactions.slice(0, 10).map((tx) => ({
               hash: tx.txHash,
-              time: new Date(tx.blockTime * 1000).toISOString(),
+              time: tx.blockTime, // Already ISO string
               action: tx.mainAction,
               transfers: tx.tokenTransfers.length,
             })),
@@ -176,8 +190,8 @@ export async function executeTool(
           },
           token: {
             marketCap: tokenInfo?.marketCap || 0,
-            volume24h: tokenInfo?.volume24h || 0,
-            liquidity: (tokenInfo?.marketCap || 0) * 0.05, // Estimate
+            volume24h: tokenInfo?.v24hUSD || 0,
+            liquidity: tokenInfo?.liquidity || 0,
             ageHours: 168, // Would need historical data
             holderCount: tokenInfo?.holder || 0,
           },
@@ -217,11 +231,12 @@ export async function executeTool(
             symbol: tokenInfo.symbol,
             name: tokenInfo.name,
             price: tokenInfo.price,
-            priceChange24h: tokenInfo.priceChange24h,
-            volume24h: tokenInfo.volume24h,
+            priceChange24h: tokenInfo.priceChange24hPercent,
+            volume24h: tokenInfo.v24hUSD,
             marketCap: tokenInfo.marketCap,
             holders: tokenInfo.holder,
-            supply: tokenInfo.supply,
+            liquidity: tokenInfo.liquidity,
+            totalSupply: tokenInfo.totalSupply,
           },
         };
       }
@@ -243,7 +258,8 @@ export async function executeTool(
               symbol: t.symbol,
               name: t.name,
               price: t.price,
-              marketCap: t.marketCap,
+              marketCap: t.market_cap,
+              volume24h: t.volume_24h_usd,
             })),
           },
         };
@@ -262,10 +278,9 @@ export async function executeTool(
               address: t.address,
               symbol: t.symbol,
               name: t.name,
-              price: t.price,
-              priceChange24h: t.priceChange24h,
-              volume24h: t.volume24h,
-              marketCap: t.marketCap,
+              liquidity: t.liquidity,
+              volume24h: t.volume24hUSD,
+              rank: t.rank,
             })),
           },
         };

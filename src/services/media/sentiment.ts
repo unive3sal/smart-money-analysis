@@ -25,23 +25,36 @@ interface LunarCrushResponse {
 }
 
 /**
- * Fetch sentiment from LunarCrush (free tier)
+ * Fetch sentiment from LunarCrush
+ * Note: LunarCrush API now requires authentication. 
+ * For hackathon MVP, we return placeholder data if no API key is available.
  */
 export async function fetchLunarCrushSentiment(
   symbol: string
 ): Promise<MediaSentiment | null> {
+  const apiKey = process.env.LUNARCRUSH_API_KEY;
+  
+  // If no API key, skip LunarCrush and return null (will use fallback)
+  if (!apiKey) {
+    return null;
+  }
+  
   try {
     const response = await fetch(
       `${LUNARCRUSH_API}/coins/${symbol.toLowerCase()}/time-series/v2`,
       {
         headers: {
           Accept: "application/json",
+          Authorization: `Bearer ${apiKey}`,
         },
       }
     );
 
     if (!response.ok) {
-      console.warn(`LunarCrush API error for ${symbol}: ${response.status}`);
+      // Don't log error for expected 401 when no key
+      if (response.status !== 401) {
+        console.warn(`LunarCrush API error for ${symbol}: ${response.status}`);
+      }
       return null;
     }
 
@@ -126,12 +139,31 @@ export async function getMediaSentiment(
     tokenAddress ? fetchDexScreenerSocial(tokenAddress).catch(() => null) : null,
   ]);
 
-  // Use LunarCrush if available, otherwise generate placeholder
+  // Use LunarCrush if available
   if (lunarCrush) {
     return lunarCrush;
   }
 
-  // Generate placeholder sentiment based on available data
+  // If we have DexScreener data, use it to generate sentiment
+  if (dexScreener?.socialScore !== undefined) {
+    const normalizedScore = (dexScreener.socialScore - 50) / 50; // Normalize to -1 to 1
+    return {
+      tokenSymbol,
+      tokenAddress,
+      mentions1h: 0,
+      mentions24h: 0,
+      mentionChange24h: 0,
+      sentimentScore: normalizedScore,
+      sentimentLabel: getSentimentLabel(normalizedScore),
+      topInfluencersMentioned: [],
+      influencerSentiment: normalizedScore,
+      trendingRank: null,
+      trendingMomentum: dexScreener.viralPotential === "high" ? "rising" : "stable",
+      lastUpdated: Date.now(),
+    };
+  }
+
+  // Generate neutral placeholder sentiment (no external data available)
   return {
     tokenSymbol,
     tokenAddress,

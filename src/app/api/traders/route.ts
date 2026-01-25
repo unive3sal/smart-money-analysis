@@ -4,27 +4,41 @@ import { getBirdeyeClient } from "@/services/birdeye/client";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+// Valid Birdeye time_frame values for top_traders endpoint
+type ValidTimeframe = "30m" | "1h" | "2h" | "4h" | "6h" | "8h" | "12h" | "24h";
+const VALID_TIMEFRAMES: ValidTimeframe[] = ["30m", "1h", "2h", "4h", "6h", "8h", "12h", "24h"];
+
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
-    const timeframe = (searchParams.get("timeframe") as "24h" | "7d" | "30d") || "24h";
-    const limit = Math.min(parseInt(searchParams.get("limit") || "20"), 50);
+    const requestedTimeframe = searchParams.get("timeframe") || "24h";
+    // Validate timeframe - default to 24h if invalid
+    const timeframe: ValidTimeframe = VALID_TIMEFRAMES.includes(requestedTimeframe as ValidTimeframe)
+      ? (requestedTimeframe as ValidTimeframe)
+      : "24h";
+    // Birdeye API limit is 1-10 for top_traders endpoint
+    const limit = Math.min(parseInt(searchParams.get("limit") || "10"), 10);
+    // Default to wrapped SOL if no token specified
+    const tokenAddress = searchParams.get("token") || "So11111111111111111111111111111111111111112";
 
     const birdeye = getBirdeyeClient();
-    const traders = await birdeye.getTopTraders(timeframe, limit);
+    const traders = await birdeye.getTopTraders(tokenAddress, timeframe, limit);
 
     return NextResponse.json({
       success: true,
       data: {
+        tokenAddress,
         timeframe,
         count: traders.length,
         traders: traders.map((t) => ({
-          address: t.address,
-          pnl: t.pnl,
-          pnlPercent: t.pnlPercent,
-          winRate: t.winRate,
-          tradeCount: t.tradeCount,
+          owner: t.owner,
           volume: t.volume,
+          trade: t.trade,
+          tradeBuy: t.tradeBuy,
+          tradeSell: t.tradeSell,
+          volumeBuy: t.volumeBuy,
+          volumeSell: t.volumeSell,
+          tags: t.tags,
         })),
       },
     });

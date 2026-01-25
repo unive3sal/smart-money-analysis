@@ -8,6 +8,7 @@ import {
   getProxyClient,
   ChatMessage,
   ChatCompletionRequest,
+  ChatCompletionChunk,
   ModelId,
   AVAILABLE_MODELS,
 } from "./providers/openaiProxy";
@@ -161,4 +162,156 @@ export async function query(
   options: ChatOptions
 ): Promise<ChatResult> {
   return chat([{ role: "user", content: prompt }], options);
+}
+
+/**
+ * Streaming event types
+ */
+export type StreamEvent =
+  | { type: "content"; content: string }
+  | { type: "tool_start"; toolName: string }
+  | { type: "tool_end"; toolName: string; result: unknown }
+  | { type: "done"; toolsUsed: string[] }
+  | { type: "error"; error: string };
+
+/**
+ * Process a chat message with streaming output
+ */
+export async function* chatStream(
+  messages: Array<{ role: "user" | "assistant"; content: string }>,
+  options: ChatOptions
+): AsyncGenerator<StreamEvent, void, unknown> {
+  const client = getProxyClient();
+  const toolsUsed: string[] = [];
+
+  // Build initial messages array
+  const chatMessages: ChatMessage[] = [
+    { role: "system", content: SYSTEM_PROMPT },
+    ...messages.map((m) => ({
+      role: m.role as "user" | "assistant",
+      content: m.content,
+    })),
+  ];
+
+  const MAX_ITERATIONS = 10;
+  let iterations = 0;
+
+  while (iterations < MAX_ITERATIONS) {
+    iterations++;
+
+    const request: ChatCompletionRequest = {
+      model: options.modelId,
+      messages: chatMessages,
+      tools: ALL_TOOLS,
+      tool_choice: "auto",
+      temperature: options.temperature ?? 0.7,
+      max_tokens: options.maxTokens ?? 2048,
+    };
+
+    // Accumulate the response
+    let contentBuffer = "";
+    let toolCallsBuffer: {
+      id: string;
+      name: string;
+      arguments: string;
+    }[] = [];
+    let finishReason: string | null = null;
+
+    // Stream the response
+    for await (const chunk of client.chatCompletionStream(request)) {
+      const choice = chunk.choices[0];
+      if (!choice) continue;
+
+      // Handle content delta
+      if (choice.delta.content) {
+        contentBuffer += choice.delta.content;
+        yield { type: "content", content: choice.delta.content };
+      }
+
+      // Handle tool calls delta
+      if (choice.delta.tool_calls) {
+        for (const toolCallDelta of choice.delta.tool_calls) {
+          const index = toolCallDelta.index;
+          
+          // Initialize tool call if needed
+          if (!toolCallsBuffer[index]) {
+            toolCallsBuffer[index] = {
+              id: toolCallDelta.id || "",
+              name: toolCallDelta.function?.name || "",
+              arguments: "",
+            };
+          }
+
+          // Accumulate function name and arguments
+          if (toolCallDelta.id) {
+            toolCallsBuffer[index].id = toolCallDelta.id;
+          }
+          if (toolCallDelta.function?.name) {
+            toolCallsBuffer[index].name = toolCallDelta.function.name;
+          }
+          if (toolCallDelta.function?.arguments) {
+            toolCallsBuffer[index].arguments += toolCallDelta.function.arguments;
+          }
+        }
+      }
+
+      if (choice.finish_reason) {
+        finishReason = choice.finish_reason;
+      }
+    }
+
+    // Handle tool calls
+    if (finishReason === "tool_calls" && toolCallsBuffer.length > 0) {
+      // Add assistant message with tool calls to history
+      const assistantMessage: ChatMessage = {
+        role: "assistant",
+        content: contentBuffer || "",
+        tool_calls: toolCallsBuffer.map((tc) => ({
+          id: tc.id,
+          type: "function" as const,
+          function: {
+            name: tc.name,
+            arguments: tc.arguments,
+          },
+        })),
+      };
+      chatMessages.push(assistantMessage);
+
+      // Execute each tool call
+      for (const toolCall of toolCallsBuffer) {
+        const toolName = toolCall.name as ToolName;
+        toolsUsed.push(toolName);
+
+        yield { type: "tool_start", toolName };
+
+        let args: Record<string, unknown>;
+        try {
+          args = JSON.parse(toolCall.arguments);
+        } catch {
+          args = {};
+        }
+
+        console.log(`Executing tool: ${toolName}`, args);
+        const result = await executeTool(toolName, args);
+
+        yield { type: "tool_end", toolName, result };
+
+        // Add tool result to messages
+        chatMessages.push({
+          role: "tool",
+          tool_call_id: toolCall.id,
+          content: JSON.stringify(result),
+        });
+      }
+
+      // Continue loop to get model response after tool execution
+      continue;
+    }
+
+    // Model finished - we're done
+    yield { type: "done", toolsUsed: [...new Set(toolsUsed)] };
+    return;
+  }
+
+  yield { type: "error", error: "Maximum tool call iterations exceeded" };
 }

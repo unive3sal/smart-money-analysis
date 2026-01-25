@@ -15,12 +15,12 @@ export const fetchTopTradersTool: ToolDefinition = {
       properties: {
         timeframe: {
           type: "string",
-          enum: ["24h", "7d", "30d"],
-          description: "Time period for PnL calculation",
+          enum: ["30m", "1h", "2h", "4h", "6h", "8h", "12h", "24h"],
+          description: "Time period for PnL calculation (max 24h)",
         },
         limit: {
           type: "number",
-          description: "Number of top traders to return (max 50)",
+          description: "Number of top traders to return (max 10)",
         },
       },
       required: [],

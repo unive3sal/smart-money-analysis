@@ -1,6 +1,13 @@
 import { getBirdeyeClient } from "../birdeye/client";
-import { WalletTransaction, WalletToken } from "../birdeye/types";
+import { WalletTransaction, WalletToken, BalanceChange } from "../birdeye/types";
 import { WalletFeatures, WalletFeatureSummary } from "./types";
+
+/**
+ * Helper to parse blockTime (ISO string) to timestamp
+ */
+function parseBlockTime(blockTime: string): number {
+  return new Date(blockTime).getTime();
+}
 
 /**
  * Extract structured features from wallet data
@@ -20,13 +27,16 @@ export async function extractWalletFeatures(
   const thirtyDaysAgo = now - 30 * 24 * 60 * 60 * 1000;
   const twentyFourHoursAgo = now - 24 * 60 * 60 * 1000;
 
-  // Filter recent transactions
-  const recentTxs = transactions.items.filter(
-    (tx) => tx.blockTime * 1000 > thirtyDaysAgo
+  // Filter recent transactions (blockTime is ISO string)
+  const recentTxs = transactions.filter(
+    (tx) => parseBlockTime(tx.blockTime) > thirtyDaysAgo
   );
-  const last24hTxs = transactions.items.filter(
-    (tx) => tx.blockTime * 1000 > twentyFourHoursAgo
+  const last24hTxs = transactions.filter(
+    (tx) => parseBlockTime(tx.blockTime) > twentyFourHoursAgo
   );
+
+  // Calculate total portfolio value
+  const totalPortfolioUsd = portfolio.items.reduce((sum, t) => sum + (t.valueUsd || 0), 0);
 
   // Calculate trading behavior
   const tradingBehavior = calculateTradingBehavior(recentTxs);
@@ -38,10 +48,10 @@ export async function extractWalletFeatures(
   const preferences = await determinePreferences(recentTxs);
 
   // Calculate risk profile
-  const riskProfile = calculateRiskProfile(portfolio, recentTxs);
+  const riskProfile = calculateRiskProfile(totalPortfolioUsd, portfolio.items, recentTxs);
 
   // Recent activity
-  const recentActivity = calculateRecentActivity(last24hTxs, portfolio);
+  const recentActivity = calculateRecentActivity(last24hTxs, portfolio.items);
 
   return {
     walletAddress,
@@ -67,16 +77,16 @@ function calculateTradingBehavior(transactions: WalletTransaction[]) {
   }
 
   // Calculate trade frequency
+  const oldestTxTime = parseBlockTime(transactions[transactions.length - 1].blockTime);
   const daysSpan = Math.max(
     1,
-    (Date.now() - transactions[transactions.length - 1].blockTime * 1000) /
-      (24 * 60 * 60 * 1000)
+    (Date.now() - oldestTxTime) / (24 * 60 * 60 * 1000)
   );
   const tradeFrequencyPerDay = transactions.length / daysSpan;
 
-  // Calculate average position size
+  // Calculate average position size from balance changes
   const positionSizes = transactions.flatMap((tx) =>
-    tx.tokenTransfers.map((t) => Math.abs(t.amountUsd || 0))
+    tx.balanceChange.map((bc) => Math.abs(bc.amount))
   );
   const avgPositionSizeUsd =
     positionSizes.length > 0
@@ -86,7 +96,7 @@ function calculateTradingBehavior(transactions: WalletTransaction[]) {
   // Determine preferred trading hours
   const hourCounts = new Map<number, number>();
   transactions.forEach((tx) => {
-    const hour = new Date(tx.blockTime * 1000).getUTCHours();
+    const hour = new Date(tx.blockTime).getUTCHours();
     hourCounts.set(hour, (hourCounts.get(hour) || 0) + 1);
   });
 
@@ -95,9 +105,9 @@ function calculateTradingBehavior(transactions: WalletTransaction[]) {
     .slice(0, 5)
     .map(([hour]) => hour);
 
-  // Count unique tokens
+  // Count unique tokens from balance changes
   const uniqueTokens = new Set(
-    transactions.flatMap((tx) => tx.tokenTransfers.map((t) => t.tokenAddress))
+    transactions.flatMap((tx) => tx.balanceChange.map((bc) => bc.address))
   );
 
   // Estimate average hold time (simplified - based on buy/sell pairs)
@@ -128,47 +138,41 @@ function calculatePerformance(transactions: WalletTransaction[]) {
     };
   }
 
-  // Simplified PnL calculation based on transaction data
+  // Simplified PnL calculation based on balance changes
   // In reality, you'd need to track positions more carefully
   const pnls: number[] = [];
   let totalPnl = 0;
   let grossProfit = 0;
   let grossLoss = 0;
 
-  // Group by token and calculate simple PnL
-  const tokenTrades = new Map<string, { buys: number; sells: number }>();
+  // Group by token and calculate simple PnL based on net balance changes
+  const tokenFlows = new Map<string, number>();
 
   transactions.forEach((tx) => {
-    tx.tokenTransfers.forEach((transfer) => {
-      const existing = tokenTrades.get(transfer.tokenAddress) || {
-        buys: 0,
-        sells: 0,
-      };
-
-      if (transfer.toAddress === tx.from) {
-        // Receiving tokens (buy)
-        existing.buys += transfer.amountUsd || 0;
-      } else {
-        // Sending tokens (sell)
-        existing.sells += transfer.amountUsd || 0;
-      }
-
-      tokenTrades.set(transfer.tokenAddress, existing);
+    tx.balanceChange.forEach((bc) => {
+      // Positive amount = received, negative = sent
+      const existing = tokenFlows.get(bc.address) || 0;
+      tokenFlows.set(bc.address, existing + bc.amount);
     });
   });
 
-  // Calculate realized PnL per token
-  tokenTrades.forEach((trades) => {
-    const pnl = trades.sells - trades.buys;
-    if (trades.sells > 0 && trades.buys > 0) {
-      pnls.push(pnl);
-      totalPnl += pnl;
+  // Calculate realized PnL per token (simplified)
+  tokenFlows.forEach((netFlow, tokenAddress) => {
+    // Skip SOL (native token) for PnL calculation
+    if (tokenAddress === "So11111111111111111111111111111111111111112") {
+      return;
+    }
+    
+    // Net flow represents approximate PnL
+    // Positive = net gain, negative = net loss
+    const pnl = netFlow;
+    pnls.push(pnl);
+    totalPnl += pnl;
 
-      if (pnl > 0) {
-        grossProfit += pnl;
-      } else {
-        grossLoss += Math.abs(pnl);
-      }
+    if (pnl > 0) {
+      grossProfit += pnl;
+    } else {
+      grossLoss += Math.abs(pnl);
     }
   });
 
@@ -231,22 +235,23 @@ async function determinePreferences(transactions: WalletTransaction[]) {
 }
 
 function calculateRiskProfile(
-  portfolio: { totalUsd: number; items: WalletToken[] },
+  totalPortfolioUsd: number,
+  portfolioItems: WalletToken[],
   transactions: WalletTransaction[]
 ) {
   // Calculate concentration
-  const totalValue = portfolio.totalUsd || 1;
-  const topPosition = portfolio.items.length > 0
-    ? Math.max(...portfolio.items.map((t) => t.valueUsd || 0))
+  const totalValue = totalPortfolioUsd || 1;
+  const topPosition = portfolioItems.length > 0
+    ? Math.max(...portfolioItems.map((t) => t.valueUsd || 0))
     : 0;
   const concentrationScore = topPosition / totalValue;
 
-  // Average position as percentage of portfolio
+  // Average position as percentage of portfolio based on balance changes
   const avgPosition =
     transactions.length > 0
       ? transactions.reduce((sum, tx) => {
-          const txValue = tx.tokenTransfers.reduce(
-            (s, t) => s + Math.abs(t.amountUsd || 0),
+          const txValue = tx.balanceChange.reduce(
+            (s, bc) => s + Math.abs(bc.amount),
             0
           );
           return sum + txValue;
@@ -265,20 +270,22 @@ function calculateRiskProfile(
 
 function calculateRecentActivity(
   last24hTxs: WalletTransaction[],
-  portfolio: { items: WalletToken[] }
+  portfolioItems: WalletToken[]
 ) {
   const tokensEntered: string[] = [];
   const tokensExited: string[] = [];
   let netFlow = 0;
 
   last24hTxs.forEach((tx) => {
-    tx.tokenTransfers.forEach((transfer) => {
-      if (transfer.toAddress === tx.from) {
-        tokensEntered.push(transfer.symbol);
-        netFlow += transfer.amountUsd || 0;
+    tx.balanceChange.forEach((bc) => {
+      if (bc.amount > 0) {
+        // Received tokens
+        tokensEntered.push(bc.symbol);
+        netFlow += bc.amount;
       } else {
-        tokensExited.push(transfer.symbol);
-        netFlow -= transfer.amountUsd || 0;
+        // Sent tokens
+        tokensExited.push(bc.symbol);
+        netFlow += bc.amount; // amount is already negative
       }
     });
   });
@@ -288,7 +295,7 @@ function calculateRecentActivity(
     netFlow24h: netFlow,
     tokensEntered24h: [...new Set(tokensEntered)],
     tokensExited24h: [...new Set(tokensExited)],
-    currentPositions: portfolio.items.filter((t) => t.valueUsd > 10).length,
+    currentPositions: portfolioItems.filter((t) => t.valueUsd > 10).length,
   };
 }
 

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { chat, getAvailableModels } from "@/agent";
+import { chat, chatStream, getAvailableModels, StreamEvent } from "@/agent";
 import { ModelId } from "@/agent/providers/openaiProxy";
 
 export const runtime = "nodejs";
@@ -10,6 +10,7 @@ interface ChatRequestBody {
   messages: Array<{ role: "user" | "assistant"; content: string }>;
   temperature?: number;
   maxTokens?: number;
+  stream?: boolean;
 }
 
 export async function POST(request: NextRequest) {
@@ -30,6 +31,47 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Handle streaming request
+    if (body.stream) {
+      const encoder = new TextEncoder();
+      
+      const stream = new ReadableStream({
+        async start(controller) {
+          try {
+            const eventStream = chatStream(body.messages, {
+              modelId: body.modelId,
+              temperature: body.temperature,
+              maxTokens: body.maxTokens,
+            });
+
+            for await (const event of eventStream) {
+              const data = `data: ${JSON.stringify(event)}\n\n`;
+              controller.enqueue(encoder.encode(data));
+            }
+
+            controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+            controller.close();
+          } catch (error) {
+            const errorEvent: StreamEvent = {
+              type: "error",
+              error: error instanceof Error ? error.message : "Unknown error",
+            };
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify(errorEvent)}\n\n`));
+            controller.close();
+          }
+        },
+      });
+
+      return new Response(stream, {
+        headers: {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+          "Connection": "keep-alive",
+        },
+      });
+    }
+
+    // Non-streaming request (original behavior)
     const result = await chat(body.messages, {
       modelId: body.modelId,
       temperature: body.temperature,

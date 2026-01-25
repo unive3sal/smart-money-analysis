@@ -60,6 +60,30 @@ export interface ChatCompletionResponse {
   };
 }
 
+export interface ChatCompletionChunk {
+  id: string;
+  object: "chat.completion.chunk";
+  created: number;
+  model: string;
+  choices: {
+    index: number;
+    delta: {
+      role?: "assistant";
+      content?: string;
+      tool_calls?: {
+        index: number;
+        id?: string;
+        type?: "function";
+        function?: {
+          name?: string;
+          arguments?: string;
+        };
+      }[];
+    };
+    finish_reason: "stop" | "tool_calls" | "length" | null;
+  }[];
+}
+
 /**
  * OpenAI-compatible proxy client
  */
@@ -70,16 +94,26 @@ export class OpenAIProxyClient {
     this.config = config;
   }
 
+  private getEndpoint(): string {
+    const baseUrl = this.config.proxyUrl.replace(/\/+$/, ""); // Remove trailing slashes
+    return baseUrl.includes("/v1/chat/completions") 
+      ? baseUrl 
+      : `${baseUrl}/v1/chat/completions`;
+  }
+
   async chatCompletion(
     request: ChatCompletionRequest
   ): Promise<ChatCompletionResponse> {
-    const response = await fetch(this.config.proxyUrl, {
+    const endpoint = this.getEndpoint();
+    console.log(`[LLM Proxy] Requesting: ${endpoint}`);
+    
+    const response = await fetch(endpoint, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${this.config.proxyToken}`,
       },
-      body: JSON.stringify(request),
+      body: JSON.stringify({ ...request, stream: false }),
     });
 
     if (!response.ok) {
@@ -90,6 +124,63 @@ export class OpenAIProxyClient {
     }
 
     return response.json();
+  }
+
+  async *chatCompletionStream(
+    request: ChatCompletionRequest
+  ): AsyncGenerator<ChatCompletionChunk, void, unknown> {
+    const endpoint = this.getEndpoint();
+    console.log(`[LLM Proxy] Streaming request: ${endpoint}`);
+    
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${this.config.proxyToken}`,
+      },
+      body: JSON.stringify({ ...request, stream: true }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(
+        `Proxy API error: ${response.status} ${response.statusText} - ${errorText}`
+      );
+    }
+
+    if (!response.body) {
+      throw new Error("No response body for streaming");
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed || trimmed === "data: [DONE]") continue;
+          if (trimmed.startsWith("data: ")) {
+            try {
+              const chunk: ChatCompletionChunk = JSON.parse(trimmed.slice(6));
+              yield chunk;
+            } catch {
+              // Skip malformed JSON
+            }
+          }
+        }
+      }
+    } finally {
+      reader.releaseLock();
+    }
   }
 }
 

@@ -4,11 +4,12 @@ Track and analyze smart money movements on Solana. Identify top-performing trade
 
 ## Features
 
-- **Smart Money Leaderboard** - Track top traders by PnL across different timeframes
+- **Smart Money Leaderboard** - Track top traders by volume across different timeframes (1h, 4h, 12h, 24h)
 - **Wallet Analysis** - Deep dive into wallet holdings, transactions, and trading patterns
 - **Feature Extraction** - Structured metrics for trading behavior, performance, and risk profile
 - **Confidence Scoring** - Combined analysis of smart money activity, media sentiment, and risk factors
-- **AI Chat Assistant** - Conversational interface with multi-model LLM support (GPT-4, Claude, Gemini)
+- **AI Chat Assistant** - Streaming conversational interface with multi-model LLM support (GPT-4, Claude, Gemini)
+- **Real-time Streaming** - Token-by-token streaming responses with live tool execution status
 - **Media Sentiment** - Social sentiment tracking via LunarCrush and DexScreener
 - **TimesNet Integration** - Time series forecasting for price predictions (optional)
 
@@ -116,24 +117,45 @@ smart-money-analysis/
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/api/chat` | POST | Chat with AI agent |
+| `/api/chat` | POST | Chat with AI agent (supports `stream: true` for SSE streaming) |
 | `/api/chat` | GET | Get available models |
-| `/api/traders` | GET | Top traders leaderboard |
+| `/api/traders` | GET | Top traders leaderboard (`timeframe`: 30m, 1h, 2h, 4h, 6h, 8h, 12h, 24h) |
 | `/api/wallet/[address]` | GET | Wallet feature analysis |
 | `/api/confidence` | GET | Token confidence score |
+
+### Streaming Chat
+
+The chat endpoint supports Server-Sent Events (SSE) streaming:
+
+```javascript
+const response = await fetch("/api/chat", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    modelId: "gpt-4o-mini",
+    messages: [{ role: "user", content: "What's trending?" }],
+    stream: true  // Enable streaming
+  }),
+});
+
+const reader = response.body.getReader();
+// Read SSE events: content, tool_start, tool_end, done, error
+```
 
 ## Agent Tools
 
 The AI assistant has access to these tools:
 
-- `fetch_top_traders` - Get top traders by PnL
-- `analyze_wallet` - Wallet holdings and transactions
-- `get_extracted_features` - Structured wallet metrics
-- `get_media_sentiment` - Social sentiment data
-- `get_confidence_score` - Trading signal confidence
-- `get_token_info` - Token details
-- `search_token` - Search tokens by name/symbol
-- `get_trending_tokens` - Currently trending tokens
+| Tool | Description |
+|------|-------------|
+| `fetch_top_traders` | Get top traders by volume (timeframes: 30m-24h) |
+| `analyze_wallet` | Wallet holdings and transactions |
+| `get_extracted_features` | Structured wallet metrics (trading behavior, performance, risk) |
+| `get_media_sentiment` | Social sentiment data from LunarCrush/DexScreener |
+| `get_confidence_score` | Trading signal confidence with component breakdown |
+| `get_token_info` | Token details (price, market cap, liquidity, holders) |
+| `search_token` | Search tokens by name/symbol |
+| `get_trending_tokens` | Currently trending tokens on Solana |
 
 ## Example Queries
 

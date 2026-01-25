@@ -23,12 +23,19 @@ cd timesnet-service && pip install -r requirements.txt && python main.py
 src/
 ├── app/                    # Next.js App Router
 │   ├── api/               # API routes (route.ts files)
+│   │   ├── chat/          # Chat endpoint (streaming SSE support)
+│   │   ├── traders/       # Top traders leaderboard
+│   │   ├── wallet/        # Wallet analysis
+│   │   └── confidence/    # Confidence scoring
 │   └── page.tsx           # Main dashboard
 ├── agent/                  # LLM agent with tools
-│   ├── index.ts           # Main agent logic
+│   ├── index.ts           # Main agent logic (chat + chatStream)
+│   ├── providers/         # LLM provider adapters
+│   │   └── openaiProxy.ts # OpenAI-compatible proxy with streaming
 │   ├── tools/             # Tool definitions
 │   └── toolExecutor.ts    # Tool implementations
 ├── components/            # React components
+│   ├── ChatInterface.tsx  # Streaming chat UI
 │   └── ui/               # Base UI components (shadcn-style)
 ├── services/              # Backend services
 │   ├── birdeye/          # Birdeye API client
@@ -152,6 +159,7 @@ TIMESNET_SERVICE_URL=xxx   # Optional: TimesNet service
 ### Adding a New Agent Tool
 1. Define tool in `src/agent/tools/index.ts`
 2. Implement in `src/agent/toolExecutor.ts`
+3. Add to `ALL_TOOLS` array in `src/agent/tools/index.ts`
 
 ### Adding a New API Route
 1. Create folder: `src/app/api/{name}/`
@@ -161,3 +169,41 @@ TIMESNET_SERVICE_URL=xxx   # Optional: TimesNet service
 1. Create folder: `src/services/{name}/`
 2. Add `types.ts` and main logic file
 3. Export singleton getter function
+
+## Birdeye API Reference
+
+The Birdeye API client is in `src/services/birdeye/client.ts`. Types must match actual API responses documented in `birdeye.md`.
+
+### Key Endpoints & Constraints
+
+| Endpoint | Key Parameters |
+|----------|---------------|
+| `/defi/v2/tokens/top_traders` | `time_frame`: 30m, 1h, 2h, 4h, 6h, 8h, 12h, 24h (NOT 7d/30d); `limit`: 1-10 |
+| `/v1/wallet/token_list` | Returns `{ items: WalletToken[] }` |
+| `/v1/wallet/tx_list` | Returns `{ solana: WalletTransaction[] }` - note chain name key |
+| `/defi/token_overview` | Returns `TokenInfo` with `v24hUSD` for volume (not `volume24h`) |
+| `/defi/history_price` | Requires `address_type=token` parameter |
+
+### Response Type Notes
+- `WalletTransaction.blockTime` is ISO string, not Unix timestamp
+- Use `balanceChange[]` for token amounts (has `symbol`, `amount`, `address`)
+- `TokenTransfer` only has `mint`, `tokenAmount`, `fromUserAccount`, `toUserAccount`
+
+## Streaming Implementation
+
+The chat supports SSE streaming via `chatStream()` in `src/agent/index.ts`:
+
+```typescript
+// Stream events
+type StreamEvent =
+  | { type: "content"; content: string }      // Text chunk
+  | { type: "tool_start"; toolName: string }  // Tool execution started
+  | { type: "tool_end"; toolName: string }    // Tool execution completed
+  | { type: "done"; toolsUsed: string[] }     // Stream complete
+  | { type: "error"; error: string };         // Error occurred
+```
+
+To add streaming to a new endpoint:
+1. Use `chatStream()` instead of `chat()`
+2. Return `ReadableStream` with SSE format (`data: {...}\n\n`)
+3. End with `data: [DONE]\n\n`

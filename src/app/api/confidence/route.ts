@@ -46,8 +46,8 @@ export async function GET(request: NextRequest) {
       },
       token: {
         marketCap: tokenInfo?.marketCap || 0,
-        volume24h: tokenInfo?.volume24h || 0,
-        liquidity: (tokenInfo?.marketCap || 0) * 0.05,
+        volume24h: tokenInfo?.v24hUSD || 0,
+        liquidity: tokenInfo?.liquidity || 0,
         ageHours: 168,
         holderCount: tokenInfo?.holder || 0,
       },
