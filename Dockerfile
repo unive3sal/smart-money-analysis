@@ -38,6 +38,9 @@ ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 # Disable telemetry during build
 ENV NEXT_TELEMETRY_DISABLED=1
 
+# Create public directory if it doesn't exist (for COPY to work)
+RUN mkdir -p public
+
 # Build the Next.js application
 RUN npm run build
 
@@ -55,7 +58,7 @@ ENV NEXT_TELEMETRY_DISABLED=1
 RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 nextjs
 
-# Copy public assets
+# Copy public assets (may be empty)
 COPY --from=builder /app/public ./public
 
 # Set correct permissions for prerender cache
