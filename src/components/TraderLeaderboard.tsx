@@ -26,7 +26,7 @@ export function TraderLeaderboard({ onSelectWallet }: TraderLeaderboardProps) {
   const [traders, setTraders] = useState<Trader[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [timeframe, setTimeframe] = useState<"1h" | "4h" | "12h" | "24h">("24h");
+  const [timeframe, setTimeframe] = useState<"30m" | "1h" | "4h" | "8h" | "24h">("24h");
 
   const fetchTraders = async () => {
     setLoading(true);
@@ -61,7 +61,7 @@ export function TraderLeaderboard({ onSelectWallet }: TraderLeaderboardProps) {
         </CardTitle>
         <div className="flex items-center gap-2">
           <div className="flex gap-1">
-            {(["1h", "4h", "12h", "24h"] as const).map((tf) => (
+            {(["30m", "1h", "4h", "8h", "24h"] as const).map((tf) => (
               <Button
                 key={tf}
                 variant={timeframe === tf ? "default" : "outline"}

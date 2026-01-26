@@ -42,9 +42,9 @@ export async function executeTool(
 
     switch (toolName) {
       case "fetch_top_traders": {
-        // Validate timeframe - Birdeye only accepts: 30m, 1h, 2h, 4h, 6h, 8h, 12h, 24h
+        // Validate timeframe - Birdeye only accepts: 30m, 1h, 2h, 4h, 6h, 8h, 24h (12h NOT supported on Solana)
         const rawTimeframe = String(args.timeframe || "24h").toLowerCase();
-        const validTimeframes = ["30m", "1h", "2h", "4h", "6h", "8h", "12h", "24h"] as const;
+        const validTimeframes = ["30m", "1h", "2h", "4h", "6h", "8h", "24h"] as const;
         const timeframe = validTimeframes.includes(rawTimeframe as typeof validTimeframes[number]) 
           ? (rawTimeframe as typeof validTimeframes[number])
           : "24h";

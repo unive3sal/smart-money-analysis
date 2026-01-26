@@ -71,11 +71,12 @@ class BirdeyeClient {
    * Get top traders for a specific token
    * Endpoint: /defi/v2/tokens/top_traders
    * Example: birdeye.md lines 1-27
-   * Valid time_frame values: 30m, 1h, 2h, 4h, 6h, 8h, 12h, 24h
+   * Valid time_frame values: 30m, 1h, 2h, 4h, 6h, 8h, 24h
+   * Note: 12h is NOT supported on Solana chain
    */
   async getTopTraders(
     tokenAddress: string = "So11111111111111111111111111111111111111112",
-    timeframe: "30m" | "1h" | "2h" | "4h" | "6h" | "8h" | "12h" | "24h" = "24h",
+    timeframe: "30m" | "1h" | "2h" | "4h" | "6h" | "8h" | "24h" = "24h",
     limit: number = 10
   ): Promise<TopTrader[]> {
     const data = await this.fetch<TraderListResponse>("/defi/v2/tokens/top_traders", {

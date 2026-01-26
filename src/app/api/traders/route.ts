@@ -4,9 +4,10 @@ import { getBirdeyeClient } from "@/services/birdeye/client";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-// Valid Birdeye time_frame values for top_traders endpoint
-type ValidTimeframe = "30m" | "1h" | "2h" | "4h" | "6h" | "8h" | "12h" | "24h";
-const VALID_TIMEFRAMES: ValidTimeframe[] = ["30m", "1h", "2h", "4h", "6h", "8h", "12h", "24h"];
+// Valid Birdeye time_frame values for top_traders endpoint (Solana chain)
+// Note: 12h is NOT supported on Solana
+type ValidTimeframe = "30m" | "1h" | "2h" | "4h" | "6h" | "8h" | "24h";
+const VALID_TIMEFRAMES: ValidTimeframe[] = ["30m", "1h", "2h", "4h", "6h", "8h", "24h"];
 
 export async function GET(request: NextRequest) {
   try {

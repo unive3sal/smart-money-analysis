@@ -15,8 +15,8 @@ export const fetchTopTradersTool: ToolDefinition = {
       properties: {
         timeframe: {
           type: "string",
-          enum: ["30m", "1h", "2h", "4h", "6h", "8h", "12h", "24h"],
-          description: "Time period for PnL calculation (max 24h)",
+          enum: ["30m", "1h", "2h", "4h", "6h", "8h", "24h"],
+          description: "Time period for PnL calculation (max 24h). Note: 12h is not supported on Solana.",
         },
         limit: {
           type: "number",
