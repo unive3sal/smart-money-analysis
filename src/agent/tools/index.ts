@@ -169,6 +169,76 @@ export const getTrendingTokensTool: ToolDefinition = {
   },
 };
 
+// TimesNet AI Model Tools
+export const getTimesNetForecastTool: ToolDefinition = {
+  type: "function",
+  function: {
+    name: "get_timesnet_forecast",
+    description:
+      "Get AI-powered price forecast from TimesNet model. Predicts token price direction and magnitude for the next few hours based on historical patterns.",
+    parameters: {
+      type: "object",
+      properties: {
+        tokenSymbol: {
+          type: "string",
+          description: "Token symbol (e.g., 'SOL', 'BONK')",
+        },
+        tokenAddress: {
+          type: "string",
+          description: "Token contract address",
+        },
+      },
+      required: ["tokenSymbol"],
+    },
+  },
+};
+
+export const getTimesNetAnomalyTool: ToolDefinition = {
+  type: "function",
+  function: {
+    name: "get_timesnet_anomaly",
+    description:
+      "Detect anomalies in token trading using TimesNet AI model. Identifies unusual patterns that may indicate whale activity, market manipulation, or trading opportunities.",
+    parameters: {
+      type: "object",
+      properties: {
+        tokenSymbol: {
+          type: "string",
+          description: "Token symbol (e.g., 'SOL', 'BONK')",
+        },
+        tokenAddress: {
+          type: "string",
+          description: "Token contract address",
+        },
+      },
+      required: ["tokenSymbol"],
+    },
+  },
+};
+
+export const getTimesNetAnalysisTool: ToolDefinition = {
+  type: "function",
+  function: {
+    name: "get_timesnet_analysis",
+    description:
+      "Get comprehensive TimesNet AI analysis combining price forecast and anomaly detection. Provides trading signals with LLM interpretation. Use this for a complete picture of token outlook.",
+    parameters: {
+      type: "object",
+      properties: {
+        tokenSymbol: {
+          type: "string",
+          description: "Token symbol (e.g., 'SOL', 'BONK')",
+        },
+        tokenAddress: {
+          type: "string",
+          description: "Token contract address",
+        },
+      },
+      required: ["tokenSymbol"],
+    },
+  },
+};
+
 // Export all tools as an array
 export const ALL_TOOLS: ToolDefinition[] = [
   fetchTopTradersTool,
@@ -179,4 +249,7 @@ export const ALL_TOOLS: ToolDefinition[] = [
   getTokenInfoTool,
   searchTokenTool,
   getTrendingTokensTool,
+  getTimesNetForecastTool,
+  getTimesNetAnomalyTool,
+  getTimesNetAnalysisTool,
 ];

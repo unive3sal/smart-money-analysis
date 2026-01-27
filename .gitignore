@@ -36,6 +36,7 @@ next-env.d.ts
 
 # Python (for TimesNet service)
 dataset/
+checkpoints/
 __pycache__/
 *.py[cod]
 *$py.class

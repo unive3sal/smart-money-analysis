@@ -39,7 +39,13 @@ docker-compose*.yml
 
 # Documentation
 README.md
-*.md
+AGENTS.md
+LICENSE
 
-# Python service (separate container if needed)
-timesnet-service
+# Python virtual environments and cache
+timesnet-service/.venv
+timesnet-service/__pycache__
+timesnet-service/**/__pycache__
+timesnet-service/**/*.pyc
+timesnet-service/dataset
+timesnet-service/scripts

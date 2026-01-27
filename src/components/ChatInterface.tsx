@@ -189,10 +189,10 @@ export function ChatInterface({ initialPrompt }: ChatInterfaceProps) {
   };
 
   const suggestedPrompts = [
-    "Who are the top traders this week?",
     "What tokens is smart money buying?",
-    "Analyze the top trader's wallet",
-    "What's trending on Solana right now?",
+    "Predict the price direction for SOL",
+    "Detect anomalies on BONK",
+    "Give me a full AI analysis for JUP",
   ];
 
   return (

@@ -1,0 +1,39 @@
+version: '3.8'
+
+services:
+  smart-money-analysis:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: smart-money-analysis:latest
+    container_name: smart-money-analysis
+    ports:
+      - "3000:3000"   # Next.js app
+      - "8001:8001"   # TimesNet service
+    environment:
+      # Next.js / API configuration
+      - NODE_ENV=production
+      - BIRDEYE_API_KEY=${BIRDEYE_API_KEY}
+      - LLM_PROXY_URL=${LLM_PROXY_URL:-http://localhost:3000/api/chat}
+      - LLM_PROXY_TOKEN=${LLM_PROXY_TOKEN}
+      # TimesNet service
+      - TIMESNET_SERVICE_URL=http://localhost:8001
+      - CHECKPOINT_PATH=/timesnet/checkpoints
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/", "&&", "curl", "-f", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+
+# Optional: For GPU support, uncomment below
+# services:
+#   smart-money-analysis:
+#     deploy:
+#       resources:
+#         reservations:
+#           devices:
+#             - driver: nvidia
+#               count: 1
+#               capabilities: [gpu]

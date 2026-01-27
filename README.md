@@ -11,7 +11,7 @@ Track and analyze smart money movements on Solana. Identify top-performing trade
 - **AI Chat Assistant** - Streaming conversational interface with multi-model LLM support (GPT-4, Claude, Gemini)
 - **Real-time Streaming** - Token-by-token streaming responses with live tool execution status
 - **Media Sentiment** - Social sentiment tracking via LunarCrush and DexScreener
-- **TimesNet Integration** - Time series forecasting for price predictions (optional)
+- **TimesNet AI Analysis** - Price prediction and anomaly detection using deep learning (optional)
 
 ## Tech Stack
 
@@ -156,6 +156,9 @@ The AI assistant has access to these tools:
 | `get_token_info` | Token details (price, market cap, liquidity, holders) |
 | `search_token` | Search tokens by name/symbol |
 | `get_trending_tokens` | Currently trending tokens on Solana |
+| `get_timesnet_forecast` | AI-powered price prediction for next few hours |
+| `get_timesnet_anomaly` | Detect unusual trading patterns (whale activity, manipulation) |
+| `get_timesnet_analysis` | Comprehensive AI analysis with forecast + anomaly detection |
 
 ## Example Queries
 
@@ -166,6 +169,9 @@ Try these prompts in the chat:
 - "What's the confidence score for BONK?"
 - "What tokens is smart money buying?"
 - "Show me trending tokens on Solana"
+- "Predict the price direction for SOL"
+- "Detect any anomalies or whale activity on BONK"
+- "Give me a full AI analysis for JUP"
 
 ## Screenshots
 

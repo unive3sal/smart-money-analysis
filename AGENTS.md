@@ -161,6 +161,32 @@ TIMESNET_SERVICE_URL=xxx   # Optional: TimesNet service
 2. Implement in `src/agent/toolExecutor.ts`
 3. Add to `ALL_TOOLS` array in `src/agent/tools/index.ts`
 
+## Agent Tools Reference
+
+| Tool | Description | Key Parameters |
+|------|-------------|----------------|
+| `fetch_top_traders` | Top traders by PnL | `timeframe`: 30m-24h, `limit`: max 10 |
+| `analyze_wallet` | Wallet holdings and transactions | `walletAddress` |
+| `get_extracted_features` | Structured wallet metrics | `walletAddress` |
+| `get_media_sentiment` | Social sentiment from LunarCrush/DexScreener | `tokenSymbol`, `tokenAddress` (optional) |
+| `get_confidence_score` | Trade confidence with component breakdown | `tokenAddress`, `tokenSymbol` (optional) |
+| `get_token_info` | Token details (price, mcap, volume) | `tokenAddress` |
+| `search_token` | Search tokens by name/symbol | `query` |
+| `get_trending_tokens` | Trending tokens on Solana | `limit`: max 20 |
+| `get_timesnet_forecast` | AI price prediction (next 3h) | `tokenSymbol`, `tokenAddress` (optional) |
+| `get_timesnet_anomaly` | Detect unusual patterns | `tokenSymbol`, `tokenAddress` (optional) |
+| `get_timesnet_analysis` | Full AI analysis with signals | `tokenSymbol`, `tokenAddress` (optional) |
+
+### TimesNet Service
+
+The TimesNet service provides AI-powered market analysis:
+
+- **Forecasting**: Predicts price direction and magnitude for next ~3 hours using 12h of historical data
+- **Anomaly Detection**: Identifies whale activity, market manipulation, or unusual patterns
+- **Combined Signals**: Generates trading signals (bullish/bearish/neutral) with confidence scores
+
+The service uses 18 features including price, volume, technical indicators (RSI, MACD, Bollinger Bands), and smart money metrics.
+
 ### Adding a New API Route
 1. Create folder: `src/app/api/{name}/`
 2. Add `route.ts` with handlers and config exports

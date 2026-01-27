@@ -1,19 +1,49 @@
 """
 TimesNet Service for Smart Money Analysis
-Provides time series prediction for token price movements
+Provides time series prediction and anomaly detection for token price movements
+Integrates with LLM for intelligent analysis interpretation
 """
 
-from fastapi import FastAPI, HTTPException
+import os
+import json
+import httpx
+from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from typing import List, Optional
+from pydantic import BaseModel, Field
+from typing import List, Optional, Dict, Any
 import numpy as np
+import pandas as pd
 from datetime import datetime
+from contextlib import asynccontextmanager
+
+from models.timesnet_inference import (
+    get_timesnet_service,
+    TimesNetService,
+    ForecastResult,
+    AnomalyResult,
+)
+
+
+# LLM Configuration
+LLM_PROXY_URL = os.getenv("LLM_PROXY_URL", "http://localhost:3000/api/chat")
+LLM_MODEL = os.getenv("LLM_MODEL", "claude-sonnet")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Initialize models on startup"""
+    print("Initializing TimesNet models...")
+    service = get_timesnet_service()
+    print(f"TimesNet service ready: {service.is_ready}")
+    yield
+    print("Shutting down TimesNet service...")
+
 
 app = FastAPI(
     title="TimesNet Prediction Service",
-    description="Time series forecasting for Solana token prices",
-    version="1.0.0",
+    description="Time series forecasting and anomaly detection for Solana token prices with LLM integration",
+    version="2.0.0",
+    lifespan=lifespan,
 )
 
 # CORS middleware
@@ -26,207 +56,478 @@ app.add_middleware(
 )
 
 
+# ============== Request/Response Models ==============
+
+
+class TokenData(BaseModel):
+    """Historical token data for analysis"""
+
+    date: Optional[List[str]] = None
+    price: List[float]
+    volume: Optional[List[float]] = None
+    price_change_1h: Optional[List[float]] = None
+    price_change_4h: Optional[List[float]] = None
+    volatility_1h: Optional[List[float]] = None
+    volatility_4h: Optional[List[float]] = None
+    rsi_14: Optional[List[float]] = None
+    macd: Optional[List[float]] = None
+    bb_position: Optional[List[float]] = None
+    momentum_1h: Optional[List[float]] = None
+    price_sma_ratio: Optional[List[float]] = None
+    smart_money_flow: Optional[List[float]] = None
+    buy_sell_ratio: Optional[List[float]] = None
+    sm_confidence: Optional[List[float]] = None
+    whale_activity: Optional[List[float]] = None
+    large_tx_count: Optional[List[float]] = None
+
+
 class PredictionRequest(BaseModel):
     """Request model for predictions"""
+
     token_address: str
     token_symbol: str
-    
-    # Historical price data (OHLCV)
-    prices: List[float]  # Close prices
-    volumes: Optional[List[float]] = None
-    timestamps: Optional[List[int]] = None
-    
-    # Smart money features
-    sm_net_flow: Optional[List[float]] = None
-    sm_buyer_count: Optional[List[int]] = None
-    
-    # Prediction horizon
-    horizon: int = 24  # hours
+    data: TokenData
+    include_llm_analysis: bool = True
+    horizon: int = Field(
+        default=12, ge=1, le=48, description="Forecast horizon in periods (15min each)"
+    )
 
 
-class PredictionResponse(BaseModel):
-    """Response model for predictions"""
+class ForecastResponse(BaseModel):
+    """Response for forecast endpoint"""
+
     token_address: str
     token_symbol: str
-    
-    # Prediction results
-    predicted_price_change: float  # % change predicted
-    predicted_direction: str  # "up", "down", "neutral"
-    confidence: float  # 0-1 confidence score
-    
-    # Time series forecast (if requested)
-    forecast: Optional[List[float]] = None
-    
-    # Metadata
+    predicted_change_pct: float
+    direction: str
+    confidence: float
+    forecast_horizon_hours: float
+    predicted_prices: List[float]
     model_version: str
-    predicted_at: str
+    timestamp: str
+
+
+class AnomalyResponse(BaseModel):
+    """Response for anomaly detection endpoint"""
+
+    token_address: str
+    token_symbol: str
+    anomaly_ratio: float
+    max_anomaly_score: float
+    recent_anomalies: int
+    interpretation: str
+    anomaly_indices: List[int]
+    model_version: str
+    timestamp: str
+
+
+class FullAnalysisResponse(BaseModel):
+    """Response for full analysis endpoint"""
+
+    token_address: str
+    token_symbol: str
+    forecast: Dict[str, Any]
+    anomaly_detection: Dict[str, Any]
+    combined_signal: Dict[str, Any]
+    llm_analysis: Optional[str] = None
+    model_version: str
+    timestamp: str
 
 
 class HealthResponse(BaseModel):
     status: str
-    model_loaded: bool
+    models_loaded: Dict[str, bool]
     version: str
 
 
-# Placeholder for actual TimesNet model
-# In production, you would load your trained model here
-class TimesNetPredictor:
-    """
-    TimesNet model wrapper
-    
-    In production, this would:
-    1. Load the trained TimesNet model
-    2. Process input features
-    3. Generate predictions
-    """
-    
-    def __init__(self):
-        self.model_loaded = False
-        self.version = "1.0.0-placeholder"
-        # self.model = load_model("path/to/trained/model")
-        # self.model_loaded = True
-    
-    def predict(
-        self,
-        prices: List[float],
-        volumes: Optional[List[float]] = None,
-        sm_features: Optional[dict] = None,
-        horizon: int = 24,
-    ) -> dict:
-        """
-        Generate prediction
-        
-        In production, this would use the actual TimesNet model.
-        For now, returns a placeholder prediction based on simple heuristics.
-        """
-        
-        if len(prices) < 10:
-            raise ValueError("Need at least 10 price points for prediction")
-        
-        # Simple momentum-based placeholder
-        # Replace with actual TimesNet inference
-        recent_prices = prices[-24:] if len(prices) >= 24 else prices
-        
-        # Calculate simple momentum
-        if len(recent_prices) >= 2:
-            momentum = (recent_prices[-1] - recent_prices[0]) / recent_prices[0]
-        else:
-            momentum = 0
-        
-        # Calculate volatility
-        volatility = np.std(recent_prices) / np.mean(recent_prices) if len(recent_prices) > 1 else 0
-        
-        # Simple prediction based on momentum and mean reversion
-        # In production, TimesNet would generate this
-        predicted_change = momentum * 0.5  # Dampen momentum
-        
-        # Adjust for smart money features if available
-        if sm_features and sm_features.get("net_flow"):
-            net_flow = sm_features["net_flow"]
-            if isinstance(net_flow, list) and len(net_flow) > 0:
-                avg_flow = np.mean(net_flow[-24:] if len(net_flow) >= 24 else net_flow)
-                if avg_flow > 10000:
-                    predicted_change += 0.05  # +5% for strong inflow
-                elif avg_flow < -10000:
-                    predicted_change -= 0.05  # -5% for strong outflow
-        
-        # Determine direction and confidence
-        if abs(predicted_change) < 0.02:
-            direction = "neutral"
-            confidence = 0.3
-        elif predicted_change > 0:
-            direction = "up"
-            confidence = min(0.8, 0.4 + abs(predicted_change))
-        else:
-            direction = "down"
-            confidence = min(0.8, 0.4 + abs(predicted_change))
-        
-        # Reduce confidence based on volatility
-        confidence = confidence * (1 - min(0.5, volatility))
-        
-        return {
-            "predicted_change": predicted_change * 100,  # Convert to percentage
-            "direction": direction,
-            "confidence": confidence,
-            "forecast": None,  # Would contain hourly predictions from TimesNet
-        }
+# ============== LLM Integration ==============
 
 
-# Initialize predictor
-predictor = TimesNetPredictor()
+async def get_llm_analysis(
+    token_symbol: str, forecast: Dict, anomalies: Dict, combined_signal: Dict
+) -> str:
+    """
+    Get LLM interpretation of TimesNet results
+
+    Args:
+        token_symbol: Token symbol
+        forecast: Forecast results
+        anomalies: Anomaly detection results
+        combined_signal: Combined trading signal
+
+    Returns:
+        LLM-generated analysis text
+    """
+
+    prompt = f"""Analyze the following TimesNet model predictions for {token_symbol}:
+
+**Price Forecast:**
+- Predicted Change: {forecast["predicted_change_pct"]:+.2f}%
+- Direction: {forecast["direction"]}
+- Confidence: {forecast["confidence"] * 100:.1f}%
+- Forecast Horizon: {forecast["horizon_hours"]:.1f} hours
+
+**Anomaly Detection:**
+- Anomaly Ratio: {anomalies["anomaly_ratio"] * 100:.1f}%
+- Recent Anomalies (last 3h): {anomalies["recent_anomalies"]}
+- Interpretation: {anomalies["interpretation"]}
+
+**Combined Signal:**
+- Signal: {combined_signal["signal"]}
+- Strength: {combined_signal["strength"] * 100:.1f}%
+- Recommended Action: {combined_signal["action"]}
+- Reasoning: {combined_signal["reasoning"]}
+- Warnings: {", ".join(combined_signal["warnings"]) if combined_signal["warnings"] else "None"}
+
+Please provide a concise analysis (2-3 sentences) interpreting these results for a trader. Focus on actionable insights and risk factors."""
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                LLM_PROXY_URL,
+                json={
+                    "modelId": LLM_MODEL,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "temperature": 0.7,
+                    "maxTokens": 300,
+                },
+            )
+
+            if response.status_code == 200:
+                result = response.json()
+                if result.get("success") and result.get("data", {}).get("content"):
+                    return result["data"]["content"]
+
+            return f"TimesNet predicts {forecast['direction']} movement ({forecast['predicted_change_pct']:+.2f}%) with {forecast['confidence'] * 100:.0f}% confidence. {combined_signal['reasoning']}"
+
+    except Exception as e:
+        print(f"LLM analysis error: {e}")
+        return f"TimesNet predicts {forecast['direction']} movement ({forecast['predicted_change_pct']:+.2f}%) with {forecast['confidence'] * 100:.0f}% confidence. {combined_signal['reasoning']}"
+
+
+def data_to_dataframe(data: TokenData) -> pd.DataFrame:
+    """Convert TokenData to pandas DataFrame"""
+    df_dict = {"price": data.price}
+
+    # Add optional fields if present
+    optional_fields = [
+        "volume",
+        "price_change_1h",
+        "price_change_4h",
+        "volatility_1h",
+        "volatility_4h",
+        "rsi_14",
+        "macd",
+        "bb_position",
+        "momentum_1h",
+        "price_sma_ratio",
+        "smart_money_flow",
+        "buy_sell_ratio",
+        "sm_confidence",
+        "whale_activity",
+        "large_tx_count",
+    ]
+
+    for field in optional_fields:
+        value = getattr(data, field, None)
+        if value is not None:
+            df_dict[field] = value
+
+    df = pd.DataFrame(df_dict)
+
+    # Add derived columns if missing
+    if "OT" not in df.columns:
+        df["OT"] = df["price"].shift(-1).fillna(df["price"].iloc[-1])
+
+    if "volume_ma_ratio" not in df.columns and "volume" in df.columns:
+        ma = df["volume"].rolling(24, min_periods=1).mean()
+        df["volume_ma_ratio"] = df["volume"] / ma.replace(0, 1)
+
+    return df
+
+
+# ============== API Endpoints ==============
 
 
 @app.get("/health", response_model=HealthResponse)
 async def health_check():
     """Check service health and model status"""
+    service = get_timesnet_service()
     return HealthResponse(
         status="healthy",
-        model_loaded=predictor.model_loaded,
-        version=predictor.version,
+        models_loaded={
+            "forecaster": service.forecaster.model_loaded,
+            "anomaly_detector": service.anomaly_detector.model_loaded,
+        },
+        version=service.version,
     )
 
 
-@app.post("/predict", response_model=PredictionResponse)
-async def predict(request: PredictionRequest):
+@app.post("/forecast", response_model=ForecastResponse)
+async def forecast(request: PredictionRequest):
     """
-    Generate price prediction for a token
-    
-    Requires:
-    - At least 10 historical price points
-    - Token address and symbol
-    
-    Optional:
-    - Volume data
-    - Smart money flow data
+    Generate price forecast for a token
+
+    Requires historical data with at least 'price' field.
+    Returns predicted price change, direction, and confidence.
     """
-    
     try:
-        # Prepare smart money features
-        sm_features = None
-        if request.sm_net_flow:
-            sm_features = {
-                "net_flow": request.sm_net_flow,
-                "buyer_count": request.sm_buyer_count,
-            }
-        
-        # Generate prediction
-        result = predictor.predict(
-            prices=request.prices,
-            volumes=request.volumes,
-            sm_features=sm_features,
-            horizon=request.horizon,
-        )
-        
-        return PredictionResponse(
+        service = get_timesnet_service()
+        df = data_to_dataframe(request.data)
+
+        if len(df) < 10:
+            raise HTTPException(
+                status_code=400, detail="Need at least 10 data points for forecast"
+            )
+
+        current_price = df["price"].iloc[-1]
+        result = service.forecaster.predict(df, current_price)
+
+        return ForecastResponse(
             token_address=request.token_address,
             token_symbol=request.token_symbol,
-            predicted_price_change=round(result["predicted_change"], 2),
-            predicted_direction=result["direction"],
-            confidence=round(result["confidence"], 3),
-            forecast=result["forecast"],
-            model_version=predictor.version,
-            predicted_at=datetime.utcnow().isoformat(),
+            predicted_change_pct=round(result.predicted_change_pct, 4),
+            direction=result.direction,
+            confidence=round(result.confidence, 4),
+            forecast_horizon_hours=result.forecast_horizon * 0.25,
+            predicted_prices=result.predicted_prices[: request.horizon],
+            model_version=service.version,
+            timestamp=datetime.utcnow().isoformat(),
         )
-        
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Prediction failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Forecast failed: {str(e)}")
+
+
+@app.post("/anomaly", response_model=AnomalyResponse)
+async def detect_anomalies(request: PredictionRequest):
+    """
+    Detect anomalies in token trading data
+
+    Identifies unusual patterns that may indicate whale activity,
+    market manipulation, or trading opportunities.
+    """
+    try:
+        service = get_timesnet_service()
+        df = data_to_dataframe(request.data)
+
+        if len(df) < 20:
+            raise HTTPException(
+                status_code=400,
+                detail="Need at least 20 data points for anomaly detection",
+            )
+
+        result = service.anomaly_detector.detect(df)
+
+        return AnomalyResponse(
+            token_address=request.token_address,
+            token_symbol=request.token_symbol,
+            anomaly_ratio=round(result.anomaly_ratio, 4),
+            max_anomaly_score=round(result.max_anomaly_score, 4),
+            recent_anomalies=sum(result.is_anomaly[-12:])
+            if len(result.is_anomaly) >= 12
+            else sum(result.is_anomaly),
+            interpretation=result.interpretation,
+            anomaly_indices=result.anomaly_indices[-20:],  # Last 20 anomaly indices
+            model_version=service.version,
+            timestamp=datetime.utcnow().isoformat(),
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Anomaly detection failed: {str(e)}"
+        )
+
+
+@app.post("/analyze", response_model=FullAnalysisResponse)
+async def full_analysis(request: PredictionRequest):
+    """
+    Get complete TimesNet analysis with LLM interpretation
+
+    Combines forecasting and anomaly detection with intelligent
+    analysis from LLM. Provides actionable trading signals.
+    """
+    try:
+        service = get_timesnet_service()
+        df = data_to_dataframe(request.data)
+
+        if len(df) < 20:
+            raise HTTPException(
+                status_code=400, detail="Need at least 20 data points for full analysis"
+            )
+
+        current_price = df["price"].iloc[-1]
+
+        # Get full analysis from TimesNet
+        analysis = service.get_full_analysis(df, request.token_symbol, current_price)
+
+        # Get LLM interpretation if requested
+        llm_analysis = None
+        if request.include_llm_analysis:
+            llm_analysis = await get_llm_analysis(
+                request.token_symbol,
+                analysis["forecast"],
+                analysis["anomaly_detection"],
+                analysis["combined_signal"],
+            )
+
+        return FullAnalysisResponse(
+            token_address=request.token_address,
+            token_symbol=request.token_symbol,
+            forecast=analysis["forecast"],
+            anomaly_detection=analysis["anomaly_detection"],
+            combined_signal=analysis["combined_signal"],
+            llm_analysis=llm_analysis,
+            model_version=service.version,
+            timestamp=analysis["timestamp"],
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Analysis failed: {str(e)}")
 
 
 @app.get("/")
 async def root():
-    """API root - returns basic info"""
+    """API root - returns service info and available endpoints"""
+    service = get_timesnet_service()
     return {
         "service": "TimesNet Prediction Service",
-        "version": predictor.version,
+        "version": service.version,
+        "status": "ready" if service.is_ready else "initializing",
         "endpoints": {
-            "health": "/health",
-            "predict": "/predict",
+            "health": "/health - Check service health",
+            "forecast": "/forecast - Price prediction (POST)",
+            "anomaly": "/anomaly - Anomaly detection (POST)",
+            "analyze": "/analyze - Full analysis with LLM (POST)",
         },
+        "features": [
+            "Short-term price forecasting (up to 12 hours)",
+            "Anomaly detection for unusual trading patterns",
+            "Combined trading signals",
+            "LLM-powered analysis interpretation",
+        ],
     }
+
+
+# ============== Simple Query Endpoint (for chatbot) ==============
+
+
+class SimpleQueryRequest(BaseModel):
+    """Simple query request for chatbot integration"""
+
+    token_symbol: str
+    token_address: Optional[str] = None
+    query_type: str = Field(
+        default="full", description="Query type: 'forecast', 'anomaly', or 'full'"
+    )
+    price_history: List[float] = Field(
+        description="Recent price history (at least 48 data points for best results)"
+    )
+    volume_history: Optional[List[float]] = None
+
+
+class SimpleQueryResponse(BaseModel):
+    """Simple query response for chatbot"""
+
+    token_symbol: str
+    summary: str
+    signal: str
+    confidence: float
+    details: Dict[str, Any]
+
+
+@app.post("/query", response_model=SimpleQueryResponse)
+async def simple_query(request: SimpleQueryRequest):
+    """
+    Simplified query endpoint for chatbot integration
+
+    Accepts minimal data (just price history) and returns
+    a concise summary suitable for chat responses.
+    """
+    try:
+        service = get_timesnet_service()
+
+        # Build minimal DataFrame
+        df = pd.DataFrame({"price": request.price_history})
+        if request.volume_history:
+            df["volume"] = request.volume_history
+
+        # Add derived features
+        df["OT"] = df["price"].shift(-1).fillna(df["price"].iloc[-1])
+        df["price_change_1h"] = (
+            df["price"].pct_change(4).fillna(0)
+        )  # ~1h with 15min data
+        df["momentum_1h"] = df["price"].diff(4).fillna(0)
+
+        if len(df) < 20:
+            raise HTTPException(status_code=400, detail="Need at least 20 price points")
+
+        current_price = df["price"].iloc[-1]
+
+        # Get analysis based on query type
+        if request.query_type == "forecast":
+            result = service.forecaster.predict(df, current_price)
+            summary = f"{request.token_symbol}: Predicted {result.direction} {abs(result.predicted_change_pct):.2f}% over next {result.forecast_horizon * 0.25:.1f}h"
+            signal = result.direction
+            confidence = result.confidence
+            details = {
+                "predicted_change_pct": result.predicted_change_pct,
+                "forecast_horizon_hours": result.forecast_horizon * 0.25,
+            }
+
+        elif request.query_type == "anomaly":
+            result = service.anomaly_detector.detect(df)
+            summary = f"{request.token_symbol}: {result.interpretation}"
+            signal = "alert" if result.anomaly_ratio > 0.15 else "normal"
+            confidence = 1 - result.anomaly_ratio
+            details = {
+                "anomaly_ratio": result.anomaly_ratio,
+                "recent_anomalies": sum(result.is_anomaly[-12:]),
+            }
+
+        else:  # full analysis
+            analysis = service.get_full_analysis(
+                df, request.token_symbol, current_price
+            )
+
+            # Get LLM summary
+            llm_summary = await get_llm_analysis(
+                request.token_symbol,
+                analysis["forecast"],
+                analysis["anomaly_detection"],
+                analysis["combined_signal"],
+            )
+
+            summary = llm_summary
+            signal = analysis["combined_signal"]["signal"]
+            confidence = analysis["combined_signal"]["strength"]
+            details = {
+                "forecast": analysis["forecast"],
+                "anomaly": analysis["anomaly_detection"],
+                "action": analysis["combined_signal"]["action"],
+            }
+
+        return SimpleQueryResponse(
+            token_symbol=request.token_symbol,
+            summary=summary,
+            signal=signal,
+            confidence=round(confidence, 3),
+            details=details,
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Query failed: {str(e)}")
 
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+
+    uvicorn.run(app, host="0.0.0.0", port=5623)

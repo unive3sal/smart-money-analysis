@@ -16,13 +16,51 @@ import {
 
 const BIRDEYE_API_BASE = "https://public-api.birdeye.so";
 
+// Rate limiter configuration
+const RATE_LIMIT_MS = 300; // Minimum ms between requests
+const MAX_RETRIES = 3;
+const RETRY_DELAY_MS = 1000;
+
 class BirdeyeClient {
   private apiKey: string;
   private cache: Map<string, { data: unknown; expiry: number }> = new Map();
   private cacheTTL = 60 * 1000; // 1 minute cache
+  private lastRequestTime = 0;
+  private requestQueue: Promise<void> = Promise.resolve();
 
   constructor(apiKey: string) {
     this.apiKey = apiKey;
+  }
+
+  /**
+   * Ensures requests are spaced out to avoid rate limiting
+   */
+  private async waitForRateLimit(): Promise<void> {
+    const now = Date.now();
+    const timeSinceLastRequest = now - this.lastRequestTime;
+    
+    if (timeSinceLastRequest < RATE_LIMIT_MS) {
+      const waitTime = RATE_LIMIT_MS - timeSinceLastRequest;
+      await new Promise(resolve => setTimeout(resolve, waitTime));
+    }
+    
+    this.lastRequestTime = Date.now();
+  }
+
+  /**
+   * Queues requests to ensure sequential execution with rate limiting
+   */
+  private async queueRequest<T>(fn: () => Promise<T>): Promise<T> {
+    // Chain this request onto the queue
+    const result = this.requestQueue.then(async () => {
+      await this.waitForRateLimit();
+      return fn();
+    });
+    
+    // Update queue to wait for this request (ignore errors for queue purposes)
+    this.requestQueue = result.then(() => {}, () => {});
+    
+    return result;
   }
 
   private async fetch<T>(
@@ -36,12 +74,24 @@ class BirdeyeClient {
       return cached.data as T;
     }
 
+    // Queue the actual HTTP request to ensure rate limiting
+    return this.queueRequest(async () => {
+      return this.fetchWithRetry<T>(endpoint, params, cacheKey);
+    });
+  }
+
+  private async fetchWithRetry<T>(
+    endpoint: string,
+    params: Record<string, string | number>,
+    cacheKey: string,
+    attempt: number = 1
+  ): Promise<T> {
     const url = new URL(`${BIRDEYE_API_BASE}${endpoint}`);
     Object.entries(params).forEach(([key, value]) => {
       url.searchParams.append(key, String(value));
     });
 
-    console.log(`[Birdeye] Requesting: ${url.toString()}`);
+    console.log(`[Birdeye] Requesting: ${url.toString()}${attempt > 1 ? ` (attempt ${attempt})` : ""}`);
 
     const response = await fetch(url.toString(), {
       headers: {
@@ -51,9 +101,21 @@ class BirdeyeClient {
       },
     });
 
-    if (!response.ok) {
+    // Handle rate limiting with retry
+    if (response.status === 429 || !response.ok) {
       const errorBody = await response.text();
       console.error(`[Birdeye] Error response: ${errorBody}`);
+      
+      // Check if it's a rate limit error (429 or "Too many requests" in body)
+      const isRateLimit = response.status === 429 || errorBody.includes("Too many requests");
+      
+      if (isRateLimit && attempt < MAX_RETRIES) {
+        const delay = RETRY_DELAY_MS * attempt; // Exponential backoff
+        console.log(`[Birdeye] Rate limited, retrying in ${delay}ms...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+        return this.fetchWithRetry<T>(endpoint, params, cacheKey, attempt + 1);
+      }
+      
       throw new Error(`Birdeye API error: ${response.status} ${response.statusText}`);
     }
 
