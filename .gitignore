@@ -35,6 +35,7 @@ yarn-error.log*
 next-env.d.ts
 
 # Python (for TimesNet service)
+dataset/
 __pycache__/
 *.py[cod]
 *$py.class
