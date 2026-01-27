@@ -312,7 +312,7 @@ export async function executeTool(
           price_history: priceHistory,
         });
 
-        if (!timesnetResult.success) {
+        if (!timesnetResult.success || !timesnetResult.data) {
           return { success: false, error: timesnetResult.error || "TimesNet forecast failed" };
         }
 
@@ -353,7 +353,7 @@ export async function executeTool(
           price_history: priceHistory,
         });
 
-        if (!timesnetResult.success) {
+        if (!timesnetResult.success || !timesnetResult.data) {
           return { success: false, error: timesnetResult.error || "TimesNet anomaly detection failed" };
         }
 
@@ -394,9 +394,11 @@ export async function executeTool(
           price_history: priceHistory,
         });
 
-        if (!timesnetResult.success) {
+        if (!timesnetResult.success || !timesnetResult.data) {
           return { success: false, error: timesnetResult.error || "TimesNet analysis failed" };
         }
+
+        const details = timesnetResult.data.details as Record<string, unknown> | undefined;
 
         return {
           success: true,
@@ -406,9 +408,9 @@ export async function executeTool(
               summary: timesnetResult.data.summary,
               signal: timesnetResult.data.signal,
               confidence: timesnetResult.data.confidence,
-              forecast: timesnetResult.data.details?.forecast,
-              anomaly: timesnetResult.data.details?.anomaly,
-              recommendedAction: timesnetResult.data.details?.action,
+              forecast: details?.forecast,
+              anomaly: details?.anomaly,
+              recommendedAction: details?.action,
             },
           },
         };
