@@ -11,7 +11,7 @@ Track and analyze smart money movements on Solana. Identify top-performing trade
 - **AI Chat Assistant** - Streaming conversational interface with multi-model LLM support (GPT-4, Claude, Gemini)
 - **Real-time Streaming** - Token-by-token streaming responses with live tool execution status
 - **Media Sentiment** - Social sentiment tracking via LunarCrush and DexScreener
-- **TimesNet AI Analysis** - Price prediction and anomaly detection using deep learning (optional)
+- **TimesNet AI Analysis** - Price prediction and anomaly detection using deep learning
 
 ## Tech Stack
 
@@ -19,7 +19,7 @@ Track and analyze smart money movements on Solana. Identify top-performing trade
 - **Backend**: Next.js API Routes, TypeScript
 - **AI Agent**: Custom LLM proxy adapter with tool execution
 - **Data**: Birdeye API, LunarCrush, DexScreener
-- **ML Service**: Python FastAPI + TimesNet (optional)
+- **Time Series Forecasting Service**: Python FastAPI + TimesNet
 
 ## Getting Started
 
@@ -57,8 +57,8 @@ BIRDEYE_API_KEY=your_birdeye_api_key
 LLM_PROXY_URL=your_proxy_url
 LLM_PROXY_TOKEN=your_proxy_token
 
-# TimesNet Service (optional)
-TIMESNET_SERVICE_URL=http://localhost:8000
+# TimesNet Service
+TIMESNET_SERVICE_URL=http://localhost:5623
 ```
 
 ### Running the App
@@ -74,7 +74,7 @@ npm run start
 
 Open [http://localhost:3000](http://localhost:3000) to view the dashboard.
 
-### TimesNet Service (Optional)
+### TimesNet Service
 
 For time series predictions:
 
@@ -109,7 +109,7 @@ smart-money-analysis/
 │       ├── features/         # Feature extraction
 │       ├── media/            # Sentiment analysis
 │       └── confidence/       # Confidence calculator
-├── timesnet-service/          # Python ML service
+├── timesnet-service/          # Python TimesNet service
 └── AGENTS.md                  # AI agent guidelines
 ```
 
@@ -173,9 +173,12 @@ Try these prompts in the chat:
 - "Detect any anomalies or whale activity on BONK"
 - "Give me a full AI analysis for JUP"
 
-## Screenshots
+## Docker image
 
-*Dashboard with leaderboard and chat interface*
+https://hub.docker.com/repository/docker/univer5al/smart-money-analysis
+
+__For now, I integrated frontend, agent, and timesnet services in one big image,
+perhaps in the future, timesnet services will be seperated in an independent image.__
 
 ## License
 
@@ -187,3 +190,4 @@ This project is licensed under the GNU General Public License v3.0 - see the [LI
 - [LunarCrush](https://lunarcrush.com/) - Social sentiment data
 - [DexScreener](https://dexscreener.com/) - DEX data
 - [shadcn/ui](https://ui.shadcn.com/) - UI components
+- [TimesNet](https://github.com/unive3sal/Time-Series-Library) - TimesNet model
