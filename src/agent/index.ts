@@ -8,41 +8,44 @@ import {
   getProxyClient,
   ChatMessage,
   ChatCompletionRequest,
-  ChatCompletionChunk,
   ModelId,
   AVAILABLE_MODELS,
 } from "./providers/openaiProxy";
 import { ALL_TOOLS } from "./tools";
 import { executeTool, ToolName } from "./toolExecutor";
+import { buildIntentGateResponse, resolvePlatformIntent } from "./intentResolver";
+import {
+  emitMetric,
+  logError,
+  logInfo,
+  startTimer,
+  type TraceContext,
+} from "@/lib/observability";
 
-const SYSTEM_PROMPT = `You are a Smart Money Analyst for Solana. You help users identify and analyze top-performing traders (smart money) and their trading patterns.
+const SYSTEM_PROMPT = `You are a Polymarket copy-trading analyst and control assistant.
 
 Your capabilities:
-1. Fetch top traders by PnL for different timeframes
-2. Analyze wallet addresses (holdings, transactions, patterns)
-3. Extract structured wallet features (trading behavior, performance, risk)
-4. Get media sentiment for tokens (social mentions, sentiment scores)
-5. Calculate confidence scores for potential trades
-6. Get token information and search for tokens
-7. Find trending tokens
-8. TimesNet AI Analysis - Price predictions and anomaly detection:
-   - get_timesnet_forecast: Quick price direction prediction (next 3h)
-   - get_timesnet_anomaly: Detect whale activity, manipulation, unusual patterns
-   - get_timesnet_analysis: Full analysis with signals (use this for comprehensive requests)
+1. Inspect Polymarket market information and top trader activity
+2. Summarize wallet authorization and vault readiness
+3. Create, inspect, pause, resume, stop, and delete copy-trade tasks
+4. Explain task performance metrics such as realized PnL, unrealized PnL, open positions, and win rate
+5. Get TimesNet-based advisory market analysis used to filter copy-trade execution
+6. Still support legacy token/media/CCXT tools when relevant
+
+Scope rules:
+- The app supports wallet authorization, trader discovery, task lifecycle management, and market analysis.
+- Treat TimesNet outputs as an execution filter and advisory market signal, not the only reason to place a trade.
+- For any task-changing or potentially money-moving action, be explicit about what changed and cite the configured controls.
+- If live execution credentials are not configured, explain that the dashboard currently demonstrates the orchestration layer and API surface.
 
 Tool selection guidance:
-- For wallet analysis: use get_extracted_features (not raw data dumps)
-- For price predictions: use get_timesnet_forecast (quick) or get_timesnet_analysis (comprehensive)
-- For anomaly detection: use get_timesnet_anomaly or get_timesnet_analysis
-- For trade confidence: combine get_confidence_score + TimesNet + media sentiment
-- When user asks "analyze" or "full analysis": use get_timesnet_analysis
+- For top traders or realtime activity: use get_top_polymarket_traders and get_trader_activity
+- For task inspection or lifecycle changes: use the copy trade task tools
+- For market questions: use get_polymarket_market_info and get_polymarket_market_analysis
+- For wallet/vault readiness: use get_wallet_status
+- For legacy token analysis: use the original CCXT/media/TimesNet tools
 
-Always cite specific metrics and confidence levels. Mention warnings from analysis.
-
-Formatting:
-- Currency: $X.XXK or $X.XXM
-- Percentages: +X.XX% or -X.XX%
-- Addresses: first4...last4`;
+Always cite specific metrics, confidence values, and risk rails when discussing copy-trade tasks.`;
 
 export interface ChatOptions {
   modelId: ModelId;
@@ -64,10 +67,38 @@ export interface ChatResult {
  */
 export async function chat(
   messages: Array<{ role: "user" | "assistant"; content: string }>,
-  options: ChatOptions
+  options: ChatOptions,
+  context?: TraceContext
 ): Promise<ChatResult> {
   const client = getProxyClient();
   const toolsUsed: string[] = [];
+  const timer = startTimer();
+  const latestUserMessage = [...messages].reverse().find((message) => message.role === "user")?.content || "";
+  const intent = resolvePlatformIntent(latestUserMessage);
+  const gatedResponse = buildIntentGateResponse(intent);
+
+  logInfo("Agent chat started", {
+    operation: "agent_chat",
+    message_count: messages.length,
+    model_id: options.modelId,
+    latest_user_message: latestUserMessage,
+  }, context);
+
+  if (gatedResponse) {
+    emitMetric("agent_chat_latency_ms", timer.elapsedMs(), {
+      operation: "agent_chat",
+      outcome: intent.status,
+    }, context);
+    logInfo("Agent request gated", {
+      operation: "agent_chat",
+      outcome: intent.status,
+      intent_type: intent.intentType,
+    }, context);
+    return {
+      content: gatedResponse,
+      toolsUsed: [],
+    };
+  }
 
   // Build initial messages array
   const chatMessages: ChatMessage[] = [
@@ -118,8 +149,23 @@ export async function chat(
           args = {};
         }
 
-        console.log(`Executing tool: ${toolName}`, args);
-        const result = await executeTool(toolName, args);
+        logInfo("Agent tool execution started", {
+          operation: "agent_tool_execution",
+          tool_name: toolName,
+        }, context);
+        const toolTimer = startTimer();
+        const result = await executeTool(toolName, args, context);
+        emitMetric("agent_tool_latency_ms", toolTimer.elapsedMs(), {
+          operation: "agent_tool_execution",
+          tool_name: toolName,
+          outcome: result.success ? "success" : "error",
+        }, context);
+        logInfo("Agent tool execution completed", {
+          operation: "agent_tool_execution",
+          tool_name: toolName,
+          duration_ms: toolTimer.elapsedMs(),
+          outcome: result.success ? "success" : "error",
+        }, context);
 
         // Add tool result to messages
         chatMessages.push({
@@ -134,6 +180,16 @@ export async function chat(
     }
 
     // Model finished without tool calls - return the response
+    emitMetric("agent_chat_latency_ms", timer.elapsedMs(), {
+      operation: "agent_chat",
+      outcome: "success",
+    }, context);
+    logInfo("Agent chat completed", {
+      operation: "agent_chat",
+      outcome: "success",
+      duration_ms: timer.elapsedMs(),
+      tools_used: [...new Set(toolsUsed)],
+    }, context);
     return {
       content: choice.message.content || "",
       toolsUsed: [...new Set(toolsUsed)], // Deduplicate
@@ -146,6 +202,15 @@ export async function chat(
     };
   }
 
+  emitMetric("agent_chat_latency_ms", timer.elapsedMs(), {
+    operation: "agent_chat",
+    outcome: "error",
+  }, context);
+  logError("Agent chat exceeded maximum iterations", new Error("Maximum tool call iterations exceeded"), {
+    operation: "agent_chat",
+    outcome: "error",
+    duration_ms: timer.elapsedMs(),
+  }, context);
   throw new Error("Maximum tool call iterations exceeded");
 }
 
@@ -185,10 +250,25 @@ export type StreamEvent =
  */
 export async function* chatStream(
   messages: Array<{ role: "user" | "assistant"; content: string }>,
-  options: ChatOptions
+  options: ChatOptions,
+  context?: TraceContext
 ): AsyncGenerator<StreamEvent, void, unknown> {
   const client = getProxyClient();
   const toolsUsed: string[] = [];
+  const latestUserMessage = [...messages].reverse().find((message) => message.role === "user")?.content || "";
+  const intent = resolvePlatformIntent(latestUserMessage);
+  const gatedResponse = buildIntentGateResponse(intent);
+
+  if (gatedResponse) {
+    logInfo("Agent request gated in stream", {
+      operation: "agent_chat_stream",
+      outcome: intent.status,
+      intent_type: intent.intentType,
+    }, context);
+    yield { type: "content", content: gatedResponse };
+    yield { type: "done", toolsUsed: [] };
+    return;
+  }
 
   // Build initial messages array
   const chatMessages: ChatMessage[] = [
@@ -297,8 +377,23 @@ export async function* chatStream(
           args = {};
         }
 
-        console.log(`Executing tool: ${toolName}`, args);
-        const result = await executeTool(toolName, args);
+        logInfo("Agent stream tool execution started", {
+          operation: "agent_tool_execution_stream",
+          tool_name: toolName,
+        }, context);
+        const toolTimer = startTimer();
+        const result = await executeTool(toolName, args, context);
+        emitMetric("agent_tool_stream_latency_ms", toolTimer.elapsedMs(), {
+          operation: "agent_tool_execution_stream",
+          tool_name: toolName,
+          outcome: result.success ? "success" : "error",
+        }, context);
+        logInfo("Agent stream tool execution completed", {
+          operation: "agent_tool_execution_stream",
+          tool_name: toolName,
+          duration_ms: toolTimer.elapsedMs(),
+          outcome: result.success ? "success" : "error",
+        }, context);
 
         yield { type: "tool_end", toolName, result };
 

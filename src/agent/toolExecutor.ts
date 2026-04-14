@@ -2,30 +2,48 @@
  * Tool executor - handles actual execution of agent tools
  */
 
-import { getBirdeyeClient } from "@/services/birdeye/client";
-import {
-  extractWalletFeatures,
-  generateFeatureSummary,
-} from "@/services/features/extractor";
 import { getMediaSentiment } from "@/services/media/sentiment";
 import {
   calculateConfidence,
   generateConfidenceSummary,
 } from "@/services/confidence/calculator";
 import { ConfidenceInput } from "@/services/confidence/types";
+import { type TraceContext, logError } from "@/lib/observability";
+import { queryTimesNet } from "@/services/timesnet/client";
+import { getMarketDataClient } from "@/services/marketData";
+import { getSessionUser } from "@/server/auth/session";
+import { db, AnalysisSignal, TaskStatus } from "@/server/db/client";
+import { getPolymarketMarket } from "@/services/polymarket/markets";
+import { getMarketAnalysis } from "@/services/analysis/marketAnalysis";
+import { getTopPolymarketTraders, getTraderActivity } from "@/services/polymarket/traders";
+import {
+  createCopyTradeTask,
+  getCopyTradeTask,
+  listCopyTradeTasks,
+  deleteCopyTradeTask,
+  updateCopyTradeTaskStatus,
+  getCopyTradeTaskPerformance,
+} from "@/services/copytrade/tasks";
 
 export type ToolName =
-  | "fetch_top_traders"
-  | "analyze_wallet"
-  | "get_extracted_features"
   | "get_media_sentiment"
   | "get_confidence_score"
   | "get_token_info"
-  | "search_token"
-  | "get_trending_tokens"
   | "get_timesnet_forecast"
   | "get_timesnet_anomaly"
-  | "get_timesnet_analysis";
+  | "get_timesnet_analysis"
+  | "get_wallet_status"
+  | "get_polymarket_market_info"
+  | "get_polymarket_market_analysis"
+  | "get_top_polymarket_traders"
+  | "get_trader_activity"
+  | "create_copy_trade_task"
+  | "get_copy_trade_tasks"
+  | "get_copy_trade_task"
+  | "pause_copy_trade_task"
+  | "resume_copy_trade_task"
+  | "stop_copy_trade_task"
+  | "delete_copy_trade_task";
 
 export interface ToolResult {
   success: boolean;
@@ -33,106 +51,198 @@ export interface ToolResult {
   error?: string;
 }
 
+async function requireUser() {
+  const user = await getSessionUser();
+
+  if (!user) {
+    throw new Error("Wallet session required. Connect a wallet from the dashboard first.");
+  }
+
+  return user;
+}
+
 /**
  * Execute a tool by name with given arguments
  */
 export async function executeTool(
   toolName: ToolName,
-  args: Record<string, unknown>
+  args: Record<string, unknown>,
+  context?: TraceContext
 ): Promise<ToolResult> {
   try {
-    const birdeye = getBirdeyeClient();
+    const marketData = getMarketDataClient();
 
     switch (toolName) {
-      case "fetch_top_traders": {
-        // Validate timeframe - Birdeye only accepts: 30m, 1h, 2h, 4h, 6h, 8h, 24h (12h NOT supported on Solana)
-        const rawTimeframe = String(args.timeframe || "24h").toLowerCase();
-        const validTimeframes = ["30m", "1h", "2h", "4h", "6h", "8h", "24h"] as const;
-        const timeframe = validTimeframes.includes(rawTimeframe as typeof validTimeframes[number]) 
-          ? (rawTimeframe as typeof validTimeframes[number])
-          : "24h";
-        // Birdeye API limit is 1-10 for top_traders endpoint
-        const limit = Math.min(Number(args.limit) || 10, 10);
-        // Default to wrapped SOL token
-        const tokenAddress = (args.tokenAddress as string) || "So11111111111111111111111111111111111111112";
-
-        const traders = await birdeye.getTopTraders(tokenAddress, timeframe, limit);
-
-        return {
-          success: true,
-          data: {
-            tokenAddress,
-            timeframe,
-            count: traders.length,
-            traders: traders.map((t) => ({
-              owner: t.owner,
-              volume: t.volume,
-              trade: t.trade,
-              tradeBuy: t.tradeBuy,
-              tradeSell: t.tradeSell,
-              volumeBuy: t.volumeBuy,
-              volumeSell: t.volumeSell,
-              tags: t.tags,
-            })),
-          },
-        };
-      }
-
-      case "analyze_wallet": {
-        const walletAddress = args.walletAddress as string;
-        if (!walletAddress) {
-          return { success: false, error: "walletAddress is required" };
-        }
-
-        const [portfolio, transactions] = await Promise.all([
-          birdeye.getWalletPortfolio(walletAddress),
-          birdeye.getWalletTransactions(walletAddress, 50),
+      case "get_wallet_status": {
+        const user = await requireUser();
+        const [wallets, vaults] = await Promise.all([
+          db.getCurrentUserWalletConnections(),
+          db.getCurrentUserTradingVaults(),
         ]);
 
-        // Calculate total value from items
-        const totalValueUsd = portfolio.items.reduce((sum, item) => sum + (item.valueUsd || 0), 0);
-
         return {
           success: true,
           data: {
-            wallet: walletAddress,
-            totalValueUsd,
-            holdingsCount: portfolio.items.length,
-            topHoldings: portfolio.items.slice(0, 10).map((t) => ({
-              symbol: t.symbol,
-              valueUsd: t.valueUsd,
-              balance: t.uiAmount,
-            })),
-            recentTransactions: transactions.slice(0, 10).map((tx) => ({
-              hash: tx.txHash,
-              time: tx.blockTime, // Already ISO string
-              action: tx.mainAction,
-              transfers: tx.tokenTransfers.length,
-            })),
+            user,
+            wallets,
+            vaults,
           },
         };
       }
 
-      case "get_extracted_features": {
-        const walletAddress = args.walletAddress as string;
-        if (!walletAddress) {
-          return { success: false, error: "walletAddress is required" };
+      case "get_polymarket_market_info": {
+        const marketId = args.marketId as string;
+        if (!marketId) {
+          return { success: false, error: "marketId is required" };
         }
 
-        const features = await extractWalletFeatures(walletAddress);
-        const summary = generateFeatureSummary(features);
+        return {
+          success: true,
+          data: await getPolymarketMarket(marketId),
+        };
+      }
+
+      case "get_polymarket_market_analysis": {
+        const marketId = args.marketId as string;
+        if (!marketId) {
+          return { success: false, error: "marketId is required" };
+        }
+
+        return {
+          success: true,
+          data: await getMarketAnalysis(marketId),
+        };
+      }
+
+      case "get_top_polymarket_traders": {
+        const limit = Number(args.limit || 10);
+        return {
+          success: true,
+          data: await getTopPolymarketTraders(limit),
+        };
+      }
+
+      case "get_trader_activity": {
+        const address = args.address as string;
+        if (!address) {
+          return { success: false, error: "address is required" };
+        }
+
+        return {
+          success: true,
+          data: await getTraderActivity(address),
+        };
+      }
+
+      case "create_copy_trade_task": {
+        const user = await requireUser();
+        const walletConnectionId = args.walletConnectionId as string | undefined;
+        const traderAddress = args.traderAddress as string;
+        const name = args.name as string;
+        const allocationUsd = Number(args.allocationUsd || 0);
+
+        if (!walletConnectionId || !traderAddress || !name || !allocationUsd) {
+          return {
+            success: false,
+            error: "walletConnectionId, traderAddress, name, and allocationUsd are required",
+          };
+        }
+
+        return {
+          success: true,
+          data: await createCopyTradeTask({
+            userId: user.id,
+            walletConnectionId,
+            traderAddress,
+            name,
+            allocationUsd,
+            takeProfitPercent: args.takeProfitPercent ? Number(args.takeProfitPercent) : undefined,
+            stopLossPercent: args.stopLossPercent ? Number(args.stopLossPercent) : undefined,
+            timesnetEnabled: true,
+            timesnetMinimumConfidence: args.timesnetMinimumConfidence ? Number(args.timesnetMinimumConfidence) : undefined,
+            timesnetRequiredSignal: AnalysisSignal.BUY,
+          }),
+        };
+      }
+
+      case "get_copy_trade_tasks": {
+        const user = await requireUser();
+        return {
+          success: true,
+          data: await listCopyTradeTasks(user.id),
+        };
+      }
+
+      case "get_copy_trade_task": {
+        const user = await requireUser();
+        const taskId = args.taskId as string;
+        if (!taskId) {
+          return { success: false, error: "taskId is required" };
+        }
 
         return {
           success: true,
           data: {
-            summary,
-            details: {
-              trading: features.trading,
-              performance: features.performance,
-              risk: features.risk,
-              recentActivity: features.recentActivity,
-            },
+            task: await getCopyTradeTask(taskId, user.id),
+            performance: await getCopyTradeTaskPerformance(taskId, user.id),
           },
+        };
+      }
+
+      case "pause_copy_trade_task": {
+        const user = await requireUser();
+        const taskId = args.taskId as string;
+        if (!taskId) {
+          return { success: false, error: "taskId is required" };
+        }
+
+        return {
+          success: true,
+          data: await updateCopyTradeTaskStatus(taskId, user.id, TaskStatus.PAUSED),
+        };
+      }
+
+      case "resume_copy_trade_task": {
+        const user = await requireUser();
+        const taskId = args.taskId as string;
+        if (!taskId) {
+          return { success: false, error: "taskId is required" };
+        }
+
+        return {
+          success: true,
+          data: await updateCopyTradeTaskStatus(taskId, user.id, TaskStatus.ACTIVE),
+        };
+      }
+
+      case "stop_copy_trade_task": {
+        const user = await requireUser();
+        const taskId = args.taskId as string;
+        if (!taskId) {
+          return { success: false, error: "taskId is required" };
+        }
+
+        return {
+          success: true,
+          data: await updateCopyTradeTaskStatus(
+            taskId,
+            user.id,
+            TaskStatus.STOPPED,
+            (args.reason as string) || "Stopped from agent"
+          ),
+        };
+      }
+
+      case "delete_copy_trade_task": {
+        const user = await requireUser();
+        const taskId = args.taskId as string;
+        if (!taskId) {
+          return { success: false, error: "taskId is required" };
+        }
+
+        return {
+          success: true,
+          data: await deleteCopyTradeTask(taskId, user.id),
         };
       }
 
@@ -162,29 +272,25 @@ export async function executeTool(
       }
 
       case "get_confidence_score": {
-        const tokenAddress = args.tokenAddress as string;
-        const tokenSymbol = (args.tokenSymbol as string) || "UNKNOWN";
+        const tokenSymbol = args.tokenSymbol as string;
 
-        if (!tokenAddress) {
-          return { success: false, error: "tokenAddress is required" };
+        if (!tokenSymbol) {
+          return { success: false, error: "tokenSymbol is required" };
         }
 
-        // Gather data for confidence calculation
         const [tokenInfo, sentiment] = await Promise.all([
-          birdeye.getTokenInfo(tokenAddress).catch(() => null),
-          getMediaSentiment(tokenSymbol, tokenAddress),
+          marketData.getTokenInfo(tokenSymbol, context).catch(() => null),
+          getMediaSentiment(tokenSymbol),
         ]);
 
-        // Build confidence input
         const confidenceInput: ConfidenceInput = {
-          smartMoney: {
-            // These would come from aggregated smart money data
-            netFlow24h: 10000, // Placeholder - would aggregate from top traders
-            uniqueBuyers: 5,
-            uniqueSellers: 2,
-            topWalletAction: "buy",
-            avgWinRate: 0.55,
-            recentPnl: 5000,
+          marketActivity: {
+            netFlow24h: 0,
+            uniqueBuyers: 0,
+            uniqueSellers: 0,
+            dominantSide: "hold",
+            avgWinRate: 0,
+            recentPnl: 0,
           },
           media: {
             sentimentScore: sentiment.sentimentScore,
@@ -192,11 +298,11 @@ export async function executeTool(
             trendingRank: sentiment.trendingRank,
           },
           token: {
-            marketCap: tokenInfo?.marketCap || 0,
-            volume24h: tokenInfo?.v24hUSD || 0,
-            liquidity: tokenInfo?.liquidity || 0,
-            ageHours: 168, // Would need historical data
-            holderCount: tokenInfo?.holder || 0,
+            marketCap: 0,
+            volume24h: tokenInfo?.volume24h || 0,
+            liquidity: 0,
+            ageHours: 168,
+            holderCount: 0,
           },
         };
 
@@ -206,8 +312,7 @@ export async function executeTool(
         return {
           success: true,
           data: {
-            token: tokenSymbol,
-            address: tokenAddress,
+            token: tokenInfo?.symbol || tokenSymbol,
             score: confidence.score,
             signal: confidence.signal,
             reliability: confidence.reliability,
@@ -220,97 +325,49 @@ export async function executeTool(
       }
 
       case "get_token_info": {
-        const tokenAddress = args.tokenAddress as string;
-        if (!tokenAddress) {
-          return { success: false, error: "tokenAddress is required" };
+        const tokenSymbol = args.tokenSymbol as string;
+        if (!tokenSymbol) {
+          return { success: false, error: "tokenSymbol is required" };
         }
 
-        const tokenInfo = await birdeye.getTokenInfo(tokenAddress);
+        const tokenInfo = await marketData.getTokenInfo(tokenSymbol, context);
 
         return {
           success: true,
           data: {
-            address: tokenInfo.address,
+            exchangeId: tokenInfo.exchangeId,
             symbol: tokenInfo.symbol,
-            name: tokenInfo.name,
+            base: tokenInfo.base,
+            quote: tokenInfo.quote,
             price: tokenInfo.price,
-            priceChange24h: tokenInfo.priceChange24hPercent,
-            volume24h: tokenInfo.v24hUSD,
-            marketCap: tokenInfo.marketCap,
-            holders: tokenInfo.holder,
-            liquidity: tokenInfo.liquidity,
-            totalSupply: tokenInfo.totalSupply,
-          },
-        };
-      }
-
-      case "search_token": {
-        const query = args.query as string;
-        if (!query) {
-          return { success: false, error: "query is required" };
-        }
-
-        const results = await birdeye.searchToken(query);
-
-        return {
-          success: true,
-          data: {
-            query,
-            results: results.slice(0, 10).map((t) => ({
-              address: t.address,
-              symbol: t.symbol,
-              name: t.name,
-              price: t.price,
-              marketCap: t.market_cap,
-              volume24h: t.volume_24h_usd,
-            })),
-          },
-        };
-      }
-
-      case "get_trending_tokens": {
-        const limit = Math.min(Number(args.limit) || 10, 20);
-
-        const trending = await birdeye.getTrendingTokens(limit);
-
-        return {
-          success: true,
-          data: {
-            count: trending.length,
-            tokens: trending.map((t) => ({
-              address: t.address,
-              symbol: t.symbol,
-              name: t.name,
-              liquidity: t.liquidity,
-              volume24h: t.volume24hUSD,
-              rank: t.rank,
-            })),
+            priceChange24h: tokenInfo.priceChange24h,
+            volume24h: tokenInfo.volume24h,
+            high24h: tokenInfo.high24h,
+            low24h: tokenInfo.low24h,
+            bid: tokenInfo.bid,
+            ask: tokenInfo.ask,
           },
         };
       }
 
       case "get_timesnet_forecast": {
         const tokenSymbol = args.tokenSymbol as string;
-        const tokenAddress = args.tokenAddress as string | undefined;
 
         if (!tokenSymbol) {
           return { success: false, error: "tokenSymbol is required" };
         }
 
-        // Get price history from Birdeye
-        const priceHistory = await getTokenPriceHistory(birdeye, tokenSymbol, tokenAddress);
-        
+        const priceHistory = await getTokenPriceHistory(tokenSymbol, context);
+
         if (!priceHistory || priceHistory.length < 20) {
           return { success: false, error: "Insufficient price history for forecast" };
         }
 
-        // Call TimesNet service
-        const timesnetResult = await callTimesNetService("/query", {
+        const timesnetResult = await queryTimesNet({
           token_symbol: tokenSymbol,
-          token_address: tokenAddress,
           query_type: "forecast",
           price_history: priceHistory,
-        });
+        }, context);
 
         if (!timesnetResult.success || !timesnetResult.data) {
           return { success: false, error: timesnetResult.error || "TimesNet forecast failed" };
@@ -332,26 +389,22 @@ export async function executeTool(
 
       case "get_timesnet_anomaly": {
         const tokenSymbol = args.tokenSymbol as string;
-        const tokenAddress = args.tokenAddress as string | undefined;
 
         if (!tokenSymbol) {
           return { success: false, error: "tokenSymbol is required" };
         }
 
-        // Get price history from Birdeye
-        const priceHistory = await getTokenPriceHistory(birdeye, tokenSymbol, tokenAddress);
-        
+        const priceHistory = await getTokenPriceHistory(tokenSymbol, context);
+
         if (!priceHistory || priceHistory.length < 20) {
           return { success: false, error: "Insufficient price history for anomaly detection" };
         }
 
-        // Call TimesNet service
-        const timesnetResult = await callTimesNetService("/query", {
+        const timesnetResult = await queryTimesNet({
           token_symbol: tokenSymbol,
-          token_address: tokenAddress,
           query_type: "anomaly",
           price_history: priceHistory,
-        });
+        }, context);
 
         if (!timesnetResult.success || !timesnetResult.data) {
           return { success: false, error: timesnetResult.error || "TimesNet anomaly detection failed" };
@@ -373,26 +426,22 @@ export async function executeTool(
 
       case "get_timesnet_analysis": {
         const tokenSymbol = args.tokenSymbol as string;
-        const tokenAddress = args.tokenAddress as string | undefined;
 
         if (!tokenSymbol) {
           return { success: false, error: "tokenSymbol is required" };
         }
 
-        // Get price history from Birdeye
-        const priceHistory = await getTokenPriceHistory(birdeye, tokenSymbol, tokenAddress);
-        
+        const priceHistory = await getTokenPriceHistory(tokenSymbol, context);
+
         if (!priceHistory || priceHistory.length < 20) {
           return { success: false, error: "Insufficient price history for analysis" };
         }
 
-        // Call TimesNet service for full analysis
-        const timesnetResult = await callTimesNetService("/query", {
+        const timesnetResult = await queryTimesNet({
           token_symbol: tokenSymbol,
-          token_address: tokenAddress,
           query_type: "full",
           price_history: priceHistory,
-        });
+        }, context);
 
         if (!timesnetResult.success || !timesnetResult.data) {
           return { success: false, error: timesnetResult.error || "TimesNet analysis failed" };
@@ -408,7 +457,7 @@ export async function executeTool(
               summary: timesnetResult.data.summary,
               signal: timesnetResult.data.signal,
               confidence: timesnetResult.data.confidence,
-              forecast: details?.forecast,
+              prediction: details?.prediction,
               anomaly: details?.anomaly,
               recommendedAction: details?.action,
             },
@@ -420,7 +469,11 @@ export async function executeTool(
         return { success: false, error: `Unknown tool: ${toolName}` };
     }
   } catch (error) {
-    console.error(`Tool execution error (${toolName}):`, error);
+    logError("Tool execution failed", error, {
+      operation: "agent_tool_execution",
+      tool_name: toolName,
+      outcome: "error",
+    }, context);
     return {
       success: false,
       error: error instanceof Error ? error.message : "Unknown error occurred",
@@ -428,79 +481,19 @@ export async function executeTool(
   }
 }
 
-// TimesNet Service URL
-const TIMESNET_SERVICE_URL = process.env.TIMESNET_SERVICE_URL || "http://localhost:8001";
-
-/**
- * Call the TimesNet service
- */
-async function callTimesNetService(
-  endpoint: string,
-  body: Record<string, unknown>
-): Promise<{ success: boolean; data?: Record<string, unknown>; error?: string }> {
-  try {
-    const response = await fetch(`${TIMESNET_SERVICE_URL}${endpoint}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      return { success: false, error: `TimesNet service error: ${errorText}` };
-    }
-
-    const data = await response.json();
-    return { success: true, data };
-  } catch (error) {
-    console.error("TimesNet service call failed:", error);
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : "Failed to connect to TimesNet service",
-    };
-  }
-}
-
-/**
- * Get token price history for TimesNet
- */
 async function getTokenPriceHistory(
-  birdeye: ReturnType<typeof getBirdeyeClient>,
   tokenSymbol: string,
-  tokenAddress?: string
+  context?: TraceContext
 ): Promise<number[] | null> {
   try {
-    // If no address, try to search for it
-    let address = tokenAddress;
-    if (!address) {
-      const searchResults = await birdeye.searchToken(tokenSymbol);
-      if (searchResults.length > 0) {
-        address = searchResults[0].address;
-      } else {
-        // Use SOL as fallback
-        address = "So11111111111111111111111111111111111111112";
-      }
-    }
-
-    // Get price history (15-minute intervals for last 24 hours)
-    const now = Math.floor(Date.now() / 1000);
-    const dayAgo = now - 24 * 60 * 60;
-    
-    const priceData = await birdeye.getTokenPriceHistory(
-      address,
-      "15m",
-      dayAgo,
-      now
-    );
-    
-    if (!priceData || !priceData.items || priceData.items.length < 20) {
-      return null;
-    }
-
-    // Extract prices (value field contains the price)
-    return priceData.items.map((item) => item.value);
+    return await getMarketDataClient().getPriceHistory(tokenSymbol, "15m", 96, context);
   } catch (error) {
-    console.error("Failed to get price history:", error);
+    logError("Failed to load token price history for TimesNet", error, {
+      service: "timesnet",
+      operation: "timesnet_prepare_price_history",
+      outcome: "error",
+      token_symbol: tokenSymbol,
+    }, context);
     return null;
   }
 }

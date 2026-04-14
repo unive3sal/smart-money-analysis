@@ -10,7 +10,7 @@ export interface ConfidenceScore {
   
   // Component scores
   components: {
-    smartMoneyScore: number; // 0-100
+    marketActivityScore: number; // 0-100
     mediaScore: number; // 0-100
     technicalScore: number; // 0-100 (from TimesNet if available)
     riskScore: number; // 0-100 (higher = lower risk)
@@ -34,12 +34,12 @@ export interface ConfidenceScore {
  * Input for confidence calculation
  */
 export interface ConfidenceInput {
-  // Smart money data
-  smartMoney: {
+  // Market activity heuristics
+  marketActivity: {
     netFlow24h: number;
     uniqueBuyers: number;
     uniqueSellers: number;
-    topWalletAction: "buy" | "sell" | "hold";
+    dominantSide: "buy" | "sell" | "hold";
     avgWinRate: number;
     recentPnl: number;
   };

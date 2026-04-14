@@ -4,68 +4,6 @@ import { ToolDefinition } from "../providers/openaiProxy";
  * Tool definitions for the smart money agent
  */
 
-export const fetchTopTradersTool: ToolDefinition = {
-  type: "function",
-  function: {
-    name: "fetch_top_traders",
-    description:
-      "Fetch the top performing traders (smart money) on Solana by PnL. Returns a list of wallet addresses with their performance metrics.",
-    parameters: {
-      type: "object",
-      properties: {
-        timeframe: {
-          type: "string",
-          enum: ["30m", "1h", "2h", "4h", "6h", "8h", "24h"],
-          description: "Time period for PnL calculation (max 24h). Note: 12h is not supported on Solana.",
-        },
-        limit: {
-          type: "number",
-          description: "Number of top traders to return (max 10)",
-        },
-      },
-      required: [],
-    },
-  },
-};
-
-export const analyzeWalletTool: ToolDefinition = {
-  type: "function",
-  function: {
-    name: "analyze_wallet",
-    description:
-      "Get detailed analysis of a specific wallet including holdings, recent transactions, and trading patterns.",
-    parameters: {
-      type: "object",
-      properties: {
-        walletAddress: {
-          type: "string",
-          description: "The Solana wallet address to analyze",
-        },
-      },
-      required: ["walletAddress"],
-    },
-  },
-};
-
-export const getExtractedFeaturesTool: ToolDefinition = {
-  type: "function",
-  function: {
-    name: "get_extracted_features",
-    description:
-      "Get structured feature extraction for a wallet including trading behavior, performance metrics, risk profile, and recent activity. Use this instead of raw data for concise analysis.",
-    parameters: {
-      type: "object",
-      properties: {
-        walletAddress: {
-          type: "string",
-          description: "The Solana wallet address",
-        },
-      },
-      required: ["walletAddress"],
-    },
-  },
-};
-
 export const getMediaSentimentTool: ToolDefinition = {
   type: "function",
   function: {
@@ -81,7 +19,7 @@ export const getMediaSentimentTool: ToolDefinition = {
         },
         tokenAddress: {
           type: "string",
-          description: "Optional: Token contract address for more accurate data",
+          description: "Optional token identifier for more accurate data",
         },
       },
       required: ["tokenSymbol"],
@@ -94,20 +32,16 @@ export const getConfidenceScoreTool: ToolDefinition = {
   function: {
     name: "get_confidence_score",
     description:
-      "Calculate a confidence score for a potential trade based on smart money activity, media sentiment, and risk factors. Returns a signal (buy/sell/hold) with reasoning.",
+      "Calculate a confidence score for a potential trade using market data, media sentiment, and heuristic risk factors.",
     parameters: {
       type: "object",
       properties: {
-        tokenAddress: {
-          type: "string",
-          description: "Token contract address",
-        },
         tokenSymbol: {
           type: "string",
-          description: "Token symbol",
+          description: "Token symbol or market pair, for example 'SOL' or 'SOL/USDT'",
         },
       },
-      required: ["tokenAddress"],
+      required: ["tokenSymbol"],
     },
   },
 };
@@ -117,75 +51,32 @@ export const getTokenInfoTool: ToolDefinition = {
   function: {
     name: "get_token_info",
     description:
-      "Get detailed information about a token including price, market cap, volume, and holder count.",
-    parameters: {
-      type: "object",
-      properties: {
-        tokenAddress: {
-          type: "string",
-          description: "Token contract address",
-        },
-      },
-      required: ["tokenAddress"],
-    },
-  },
-};
-
-export const searchTokenTool: ToolDefinition = {
-  type: "function",
-  function: {
-    name: "search_token",
-    description:
-      "Search for a token by name or symbol. Returns matching tokens with their addresses.",
-    parameters: {
-      type: "object",
-      properties: {
-        query: {
-          type: "string",
-          description: "Token name or symbol to search for",
-        },
-      },
-      required: ["query"],
-    },
-  },
-};
-
-export const getTrendingTokensTool: ToolDefinition = {
-  type: "function",
-  function: {
-    name: "get_trending_tokens",
-    description:
-      "Get currently trending tokens on Solana based on volume and social activity.",
-    parameters: {
-      type: "object",
-      properties: {
-        limit: {
-          type: "number",
-          description: "Number of trending tokens to return (max 20)",
-        },
-      },
-      required: [],
-    },
-  },
-};
-
-// TimesNet AI Model Tools
-export const getTimesNetForecastTool: ToolDefinition = {
-  type: "function",
-  function: {
-    name: "get_timesnet_forecast",
-    description:
-      "Get AI-powered price forecast from TimesNet model. Predicts token price direction and magnitude for the next few hours based on historical patterns.",
+      "Get exchange market information for a token symbol or market pair using CCXT, including price, 24h change, and volume.",
     parameters: {
       type: "object",
       properties: {
         tokenSymbol: {
           type: "string",
-          description: "Token symbol (e.g., 'SOL', 'BONK')",
+          description: "Token symbol or market pair, for example 'SOL' or 'SOL/USDT'",
         },
-        tokenAddress: {
+      },
+      required: ["tokenSymbol"],
+    },
+  },
+};
+
+export const getTimesNetForecastTool: ToolDefinition = {
+  type: "function",
+  function: {
+    name: "get_timesnet_forecast",
+    description:
+      "Get advisory price forecast from an external TimesNet service using CCXT-backed price history.",
+    parameters: {
+      type: "object",
+      properties: {
+        tokenSymbol: {
           type: "string",
-          description: "Token contract address",
+          description: "Token symbol or market pair (e.g., 'SOL' or 'SOL/USDT')",
         },
       },
       required: ["tokenSymbol"],
@@ -198,17 +89,13 @@ export const getTimesNetAnomalyTool: ToolDefinition = {
   function: {
     name: "get_timesnet_anomaly",
     description:
-      "Detect anomalies in token trading using TimesNet AI model. Identifies unusual patterns that may indicate whale activity, market manipulation, or trading opportunities.",
+      "Detect advisory anomalies in token price behavior using external TimesNet analysis over CCXT-backed price history.",
     parameters: {
       type: "object",
       properties: {
         tokenSymbol: {
           type: "string",
-          description: "Token symbol (e.g., 'SOL', 'BONK')",
-        },
-        tokenAddress: {
-          type: "string",
-          description: "Token contract address",
+          description: "Token symbol or market pair (e.g., 'SOL' or 'SOL/USDT')",
         },
       },
       required: ["tokenSymbol"],
@@ -221,17 +108,13 @@ export const getTimesNetAnalysisTool: ToolDefinition = {
   function: {
     name: "get_timesnet_analysis",
     description:
-      "Get comprehensive TimesNet AI analysis combining price forecast and anomaly detection. Provides trading signals with LLM interpretation. Use this for a complete picture of token outlook.",
+      "Get combined advisory analysis from an external TimesNet service using CCXT-backed price history.",
     parameters: {
       type: "object",
       properties: {
         tokenSymbol: {
           type: "string",
-          description: "Token symbol (e.g., 'SOL', 'BONK')",
-        },
-        tokenAddress: {
-          type: "string",
-          description: "Token contract address",
+          description: "Token symbol or market pair (e.g., 'SOL' or 'SOL/USDT')",
         },
       },
       required: ["tokenSymbol"],
@@ -239,16 +122,253 @@ export const getTimesNetAnalysisTool: ToolDefinition = {
   },
 };
 
-// Export all tools as an array
+export const getWalletStatusTool: ToolDefinition = {
+  type: "function",
+  function: {
+    name: "get_wallet_status",
+    description: "Get authorized wallets and vault readiness for the current copy-trading user session.",
+    parameters: {
+      type: "object",
+      properties: {},
+    },
+  },
+};
+
+export const getPolymarketMarketInfoTool: ToolDefinition = {
+  type: "function",
+  function: {
+    name: "get_polymarket_market_info",
+    description: "Get Polymarket market information including price, liquidity, spread, and tags.",
+    parameters: {
+      type: "object",
+      properties: {
+        marketId: {
+          type: "string",
+          description: "Polymarket market id, slug, or token id",
+        },
+      },
+      required: ["marketId"],
+    },
+  },
+};
+
+export const getPolymarketMarketAnalysisTool: ToolDefinition = {
+  type: "function",
+  function: {
+    name: "get_polymarket_market_analysis",
+    description: "Get TimesNet-filtered AI analysis for a Polymarket market.",
+    parameters: {
+      type: "object",
+      properties: {
+        marketId: {
+          type: "string",
+          description: "Polymarket market id, slug, or token id",
+        },
+      },
+      required: ["marketId"],
+    },
+  },
+};
+
+export const getTopPolymarketTradersTool: ToolDefinition = {
+  type: "function",
+  function: {
+    name: "get_top_polymarket_traders",
+    description: "Get the top Polymarket traders ranked by recent performance and activity.",
+    parameters: {
+      type: "object",
+      properties: {
+        limit: {
+          type: "number",
+          description: "Maximum number of traders to return",
+        },
+      },
+    },
+  },
+};
+
+export const getTraderActivityTool: ToolDefinition = {
+  type: "function",
+  function: {
+    name: "get_trader_activity",
+    description: "Get recent realtime-style trader activity for a Polymarket address.",
+    parameters: {
+      type: "object",
+      properties: {
+        address: {
+          type: "string",
+          description: "Trader wallet address",
+        },
+      },
+      required: ["address"],
+    },
+  },
+};
+
+export const createCopyTradeTaskTool: ToolDefinition = {
+  type: "function",
+  function: {
+    name: "create_copy_trade_task",
+    description: "Create a copy-trade task for a trader with allocation, stop-loss, take-profit, and TimesNet filters.",
+    parameters: {
+      type: "object",
+      properties: {
+        walletConnectionId: {
+          type: "string",
+          description: "Authorized wallet connection id",
+        },
+        traderAddress: {
+          type: "string",
+          description: "Trader wallet address to follow",
+        },
+        name: {
+          type: "string",
+          description: "Display name for the task",
+        },
+        allocationUsd: {
+          type: "number",
+          description: "Task allocation in USDC/USD units",
+        },
+        takeProfitPercent: {
+          type: "number",
+          description: "Take-profit percent that can auto-stop the task",
+        },
+        stopLossPercent: {
+          type: "number",
+          description: "Stop-loss percent that can auto-stop the task",
+        },
+        timesnetMinimumConfidence: {
+          type: "number",
+          description: "Minimum TimesNet confidence threshold between 0 and 1",
+        },
+      },
+      required: ["walletConnectionId", "traderAddress", "name", "allocationUsd"],
+    },
+  },
+};
+
+export const getCopyTradeTasksTool: ToolDefinition = {
+  type: "function",
+  function: {
+    name: "get_copy_trade_tasks",
+    description: "List copy-trade tasks for the current user session.",
+    parameters: {
+      type: "object",
+      properties: {},
+    },
+  },
+};
+
+export const getCopyTradeTaskTool: ToolDefinition = {
+  type: "function",
+  function: {
+    name: "get_copy_trade_task",
+    description: "Get task details, performance, and recent execution history for a specific copy-trade task.",
+    parameters: {
+      type: "object",
+      properties: {
+        taskId: {
+          type: "string",
+          description: "Copy-trade task id",
+        },
+      },
+      required: ["taskId"],
+    },
+  },
+};
+
+export const pauseCopyTradeTaskTool: ToolDefinition = {
+  type: "function",
+  function: {
+    name: "pause_copy_trade_task",
+    description: "Pause an active copy-trade task.",
+    parameters: {
+      type: "object",
+      properties: {
+        taskId: {
+          type: "string",
+          description: "Copy-trade task id",
+        },
+      },
+      required: ["taskId"],
+    },
+  },
+};
+
+export const resumeCopyTradeTaskTool: ToolDefinition = {
+  type: "function",
+  function: {
+    name: "resume_copy_trade_task",
+    description: "Resume a paused copy-trade task.",
+    parameters: {
+      type: "object",
+      properties: {
+        taskId: {
+          type: "string",
+          description: "Copy-trade task id",
+        },
+      },
+      required: ["taskId"],
+    },
+  },
+};
+
+export const stopCopyTradeTaskTool: ToolDefinition = {
+  type: "function",
+  function: {
+    name: "stop_copy_trade_task",
+    description: "Stop a copy-trade task and record the reason.",
+    parameters: {
+      type: "object",
+      properties: {
+        taskId: {
+          type: "string",
+          description: "Copy-trade task id",
+        },
+        reason: {
+          type: "string",
+          description: "Optional stop reason",
+        },
+      },
+      required: ["taskId"],
+    },
+  },
+};
+
+export const deleteCopyTradeTaskTool: ToolDefinition = {
+  type: "function",
+  function: {
+    name: "delete_copy_trade_task",
+    description: "Delete a copy-trade task.",
+    parameters: {
+      type: "object",
+      properties: {
+        taskId: {
+          type: "string",
+          description: "Copy-trade task id",
+        },
+      },
+      required: ["taskId"],
+    },
+  },
+};
+
 export const ALL_TOOLS: ToolDefinition[] = [
-  fetchTopTradersTool,
-  analyzeWalletTool,
-  getExtractedFeaturesTool,
+  getWalletStatusTool,
+  getPolymarketMarketInfoTool,
+  getPolymarketMarketAnalysisTool,
+  getTopPolymarketTradersTool,
+  getTraderActivityTool,
+  createCopyTradeTaskTool,
+  getCopyTradeTasksTool,
+  getCopyTradeTaskTool,
+  pauseCopyTradeTaskTool,
+  resumeCopyTradeTaskTool,
+  stopCopyTradeTaskTool,
+  deleteCopyTradeTaskTool,
   getMediaSentimentTool,
   getConfidenceScoreTool,
   getTokenInfoTool,
-  searchTokenTool,
-  getTrendingTokensTool,
   getTimesNetForecastTool,
   getTimesNetAnomalyTool,
   getTimesNetAnalysisTool,

@@ -7,8 +7,8 @@ export function calculateConfidence(input: ConfidenceInput): ConfidenceScore {
   const reasoning: string[] = [];
   const warnings: string[] = [];
 
-  // 1. Smart Money Score (40% weight)
-  const smartMoneyScore = calculateSmartMoneyScore(input.smartMoney, reasoning, warnings);
+  // 1. Market activity score (40% weight)
+  const marketActivityScore = calculateMarketActivityScore(input.marketActivity, reasoning, warnings);
 
   // 2. Media Score (20% weight)
   const mediaScore = input.media
@@ -25,14 +25,14 @@ export function calculateConfidence(input: ConfidenceInput): ConfidenceScore {
 
   // Calculate weighted overall score
   const weights = {
-    smartMoney: 0.4,
+    marketActivity: 0.4,
     media: 0.2,
     technical: 0.2,
     risk: 0.2,
   };
 
   const overallScore =
-    smartMoneyScore * weights.smartMoney +
+    marketActivityScore * weights.marketActivity +
     mediaScore * weights.media +
     technicalScore * weights.technical +
     riskScore * weights.risk;
@@ -47,7 +47,7 @@ export function calculateConfidence(input: ConfidenceInput): ConfidenceScore {
     score: Math.round(overallScore),
     signal,
     components: {
-      smartMoneyScore: Math.round(smartMoneyScore),
+      marketActivityScore: Math.round(marketActivityScore),
       mediaScore: Math.round(mediaScore),
       technicalScore: Math.round(technicalScore),
       riskScore: Math.round(riskScore),
@@ -60,8 +60,8 @@ export function calculateConfidence(input: ConfidenceInput): ConfidenceScore {
   };
 }
 
-function calculateSmartMoneyScore(
-  data: ConfidenceInput["smartMoney"],
+function calculateMarketActivityScore(
+  data: ConfidenceInput["marketActivity"],
   reasoning: string[],
   warnings: string[]
 ): number {
@@ -70,46 +70,46 @@ function calculateSmartMoneyScore(
   // Net flow analysis
   if (data.netFlow24h > 100000) {
     score += 20;
-    reasoning.push(`Strong smart money inflow: $${(data.netFlow24h / 1000).toFixed(0)}K`);
+    reasoning.push(`Strong market activity inflow: $${(data.netFlow24h / 1000).toFixed(0)}K`);
   } else if (data.netFlow24h > 10000) {
     score += 10;
-    reasoning.push(`Moderate smart money inflow: $${(data.netFlow24h / 1000).toFixed(0)}K`);
+    reasoning.push(`Moderate market activity inflow: $${(data.netFlow24h / 1000).toFixed(0)}K`);
   } else if (data.netFlow24h < -100000) {
     score -= 20;
-    reasoning.push(`Strong smart money outflow: $${(Math.abs(data.netFlow24h) / 1000).toFixed(0)}K`);
-    warnings.push("Smart money is exiting this position");
+    reasoning.push(`Strong market activity outflow: $${(Math.abs(data.netFlow24h) / 1000).toFixed(0)}K`);
+    warnings.push("Market activity is skewing bearish");
   } else if (data.netFlow24h < -10000) {
     score -= 10;
-    reasoning.push(`Moderate smart money outflow`);
+    reasoning.push(`Moderate market activity outflow`);
   }
 
   // Buyer/seller ratio
   const buyerRatio = data.uniqueBuyers / (data.uniqueBuyers + data.uniqueSellers + 1);
   if (buyerRatio > 0.7) {
     score += 15;
-    reasoning.push(`High buyer ratio: ${(buyerRatio * 100).toFixed(0)}% of smart wallets buying`);
+    reasoning.push(`High buyer ratio: ${(buyerRatio * 100).toFixed(0)}% of observed activity is buying`);
   } else if (buyerRatio < 0.3) {
     score -= 15;
-    reasoning.push(`Low buyer ratio: Only ${(buyerRatio * 100).toFixed(0)}% of smart wallets buying`);
+    reasoning.push(`Low buyer ratio: Only ${(buyerRatio * 100).toFixed(0)}% of observed activity is buying`);
   }
 
-  // Top wallet action
-  if (data.topWalletAction === "buy") {
+  // Dominant side
+  if (data.dominantSide === "buy") {
     score += 10;
-    reasoning.push("Top performing wallet is buying");
-  } else if (data.topWalletAction === "sell") {
+    reasoning.push("Observed market activity is net buying");
+  } else if (data.dominantSide === "sell") {
     score -= 10;
-    reasoning.push("Top performing wallet is selling");
-    warnings.push("Best trader is exiting");
+    reasoning.push("Observed market activity is net selling");
+    warnings.push("Selling pressure is elevated");
   }
 
   // Win rate of participating wallets
   if (data.avgWinRate > 0.6) {
     score += 10;
-    reasoning.push(`High win-rate traders involved (${(data.avgWinRate * 100).toFixed(0)}%)`);
+    reasoning.push(`High win-rate activity proxy (${(data.avgWinRate * 100).toFixed(0)}%)`);
   } else if (data.avgWinRate < 0.4) {
     score -= 5;
-    warnings.push("Low win-rate traders involved");
+    warnings.push("Observed activity quality looks weak");
   }
 
   return Math.max(0, Math.min(100, score));
@@ -153,7 +153,7 @@ function calculateMediaScore(
     reasoning.push(`Trending #${data.trendingRank}`);
   }
 
-  // Check for potential pump & dump (high mentions + smart money selling)
+  // Check for potential hype cycle (high mentions + positive sentiment)
   if (data.mentions24h > 500 && data.sentimentScore > 0.3) {
     warnings.push("High hype - verify fundamentals before entering");
   }
@@ -278,7 +278,7 @@ function getReliability(
   // Data availability
   if (input.media) reliabilityScore += 25;
   if (input.technical) reliabilityScore += 25;
-  if (input.smartMoney.uniqueBuyers + input.smartMoney.uniqueSellers > 5) {
+  if (input.marketActivity.uniqueBuyers + input.marketActivity.uniqueSellers > 5) {
     reliabilityScore += 25;
   }
   if (input.token.holderCount > 1000) reliabilityScore += 25;

@@ -45,6 +45,7 @@ export function ChatInterface({ initialPrompt }: ChatInterfaceProps) {
     scrollToBottom();
   }, [messages, streamingContent]);
 
+
   const sendMessage = async () => {
     if (!input.trim() || loading) return;
 
@@ -60,7 +61,6 @@ export function ChatInterface({ initialPrompt }: ChatInterfaceProps) {
     setStreamingContent("");
     setActiveTools([]);
 
-    // Create abort controller for this request
     abortControllerRef.current = new AbortController();
 
     try {
@@ -103,11 +103,11 @@ export function ChatInterface({ initialPrompt }: ChatInterfaceProps) {
         for (const line of lines) {
           const trimmed = line.trim();
           if (!trimmed || trimmed === "data: [DONE]") continue;
-          
+
           if (trimmed.startsWith("data: ")) {
             try {
               const event: StreamEvent = JSON.parse(trimmed.slice(6));
-              
+
               switch (event.type) {
                 case "content":
                   if (event.content) {
@@ -115,13 +115,13 @@ export function ChatInterface({ initialPrompt }: ChatInterfaceProps) {
                     setStreamingContent(accumulatedContent);
                   }
                   break;
-                
+
                 case "tool_start":
                   if (event.toolName) {
                     setActiveTools((prev) => [...prev, event.toolName!]);
                   }
                   break;
-                
+
                 case "tool_end":
                   if (event.toolName) {
                     setActiveTools((prev) => prev.filter((t) => t !== event.toolName));
@@ -130,19 +130,18 @@ export function ChatInterface({ initialPrompt }: ChatInterfaceProps) {
                     }
                   }
                   break;
-                
+
                 case "done":
                   if (event.toolsUsed) {
                     toolsUsed = event.toolsUsed;
                   }
                   break;
-                
+
                 case "error":
                   throw new Error(event.error || "Unknown streaming error");
               }
             } catch (e) {
               if (e instanceof SyntaxError) {
-                // Skip malformed JSON
                 continue;
               }
               throw e;
@@ -151,7 +150,6 @@ export function ChatInterface({ initialPrompt }: ChatInterfaceProps) {
         }
       }
 
-      // Add the complete assistant message
       const assistantMessage: Message = {
         role: "assistant",
         content: accumulatedContent,
@@ -163,7 +161,6 @@ export function ChatInterface({ initialPrompt }: ChatInterfaceProps) {
       setStreamingContent("");
     } catch (error) {
       if ((error as Error).name === "AbortError") {
-        // Request was cancelled
         return;
       }
 
@@ -189,10 +186,10 @@ export function ChatInterface({ initialPrompt }: ChatInterfaceProps) {
   };
 
   const suggestedPrompts = [
-    "What tokens is smart money buying?",
-    "Predict the price direction for SOL",
-    "Detect anomalies on BONK",
-    "Give me a full AI analysis for JUP",
+    "Show the top Polymarket traders right now",
+    "Create a copy trade task for Election Whale with 250 USDC",
+    "Inspect my copy trade task performance",
+    "Give me AI analysis for the ETH 5k Polymarket market",
   ];
 
   return (
@@ -209,10 +206,10 @@ export function ChatInterface({ initialPrompt }: ChatInterfaceProps) {
         {messages.length === 0 && !streamingContent ? (
           <div className="flex flex-col items-center justify-center h-full text-center">
             <Bot className="h-12 w-12 text-muted-foreground mb-4" />
-            <h3 className="font-semibold mb-2">Smart Money Analysis</h3>
+            <h3 className="font-semibold mb-2">Polymarket Copytrade Assistant</h3>
             <p className="text-sm text-muted-foreground mb-6 max-w-md">
-              Ask me about top traders, wallet analysis, token sentiment, or
-              trading signals on Solana.
+              Ask about top traders, copy trade tasks, Polymarket markets,
+              and TimesNet-filtered market analysis.
             </p>
             <div className="flex flex-wrap gap-2 justify-center">
               {suggestedPrompts.map((prompt) => (
@@ -241,27 +238,28 @@ export function ChatInterface({ initialPrompt }: ChatInterfaceProps) {
                     <Bot className="h-4 w-4 text-primary" />
                   </div>
                 )}
+
                 <div
-                  className={`max-w-[80%] rounded-lg px-4 py-2 ${
+                  className={`max-w-[80%] rounded-lg px-4 py-3 ${
                     message.role === "user"
                       ? "bg-primary text-primary-foreground"
                       : "bg-muted"
                   }`}
                 >
-                  <div className="whitespace-pre-wrap text-sm">
-                    {message.content}
-                  </div>
+                  <div className="whitespace-pre-wrap text-sm">{message.content}</div>
+
                   {message.toolsUsed && message.toolsUsed.length > 0 && (
-                    <div className="flex flex-wrap gap-1 mt-2 pt-2 border-t border-border/50">
-                      <Wrench className="h-3 w-3 text-muted-foreground" />
+                    <div className="flex gap-1 mt-2 flex-wrap">
                       {message.toolsUsed.map((tool) => (
                         <Badge key={tool} variant="secondary" className="text-xs">
-                          {tool.replace(/_/g, " ")}
+                          <Wrench className="h-3 w-3 mr-1" />
+                          {tool}
                         </Badge>
                       ))}
                     </div>
                   )}
                 </div>
+
                 {message.role === "user" && (
                   <div className="flex-shrink-0 w-8 h-8 rounded-full bg-primary flex items-center justify-center">
                     <User className="h-4 w-4 text-primary-foreground" />
@@ -270,32 +268,19 @@ export function ChatInterface({ initialPrompt }: ChatInterfaceProps) {
               </div>
             ))}
 
-            {/* Streaming content */}
-            {(streamingContent || loading) && (
-              <div className="flex gap-3">
+            {streamingContent && (
+              <div className="flex gap-3 justify-start">
                 <div className="flex-shrink-0 w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
                   <Bot className="h-4 w-4 text-primary" />
                 </div>
-                <div className="max-w-[80%] rounded-lg px-4 py-2 bg-muted">
-                  {streamingContent ? (
-                    <div className="whitespace-pre-wrap text-sm">
-                      {streamingContent}
-                      <span className="animate-pulse">|</span>
-                    </div>
-                  ) : activeTools.length > 0 ? (
-                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                      <span>Using {activeTools[activeTools.length - 1].replace(/_/g, " ")}...</span>
-                    </div>
-                  ) : (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  )}
-                  {activeTools.length > 0 && streamingContent && (
-                    <div className="flex flex-wrap gap-1 mt-2 pt-2 border-t border-border/50">
-                      <Wrench className="h-3 w-3 text-muted-foreground" />
+                <div className="max-w-[80%] rounded-lg px-4 py-3 bg-muted">
+                  <div className="whitespace-pre-wrap text-sm">{streamingContent}</div>
+                  {activeTools.length > 0 && (
+                    <div className="flex gap-1 mt-2 flex-wrap">
                       {activeTools.map((tool) => (
-                        <Badge key={tool} variant="outline" className="text-xs animate-pulse">
-                          {tool.replace(/_/g, " ")}
+                        <Badge key={tool} variant="secondary" className="text-xs">
+                          <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                          {tool}
                         </Badge>
                       ))}
                     </div>
@@ -305,25 +290,20 @@ export function ChatInterface({ initialPrompt }: ChatInterfaceProps) {
             )}
           </>
         )}
-
         <div ref={messagesEndRef} />
       </CardContent>
 
-      <div className="p-4 border-t">
+      <div className="border-t p-4">
         <div className="flex gap-2">
           <Input
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Ask about smart money, wallets, or tokens..."
+            placeholder="Ask about traders, copy trade tasks, or Polymarket AI analysis..."
             disabled={loading}
           />
           <Button onClick={sendMessage} disabled={loading || !input.trim()}>
-            {loading ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <Send className="h-4 w-4" />
-            )}
+            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
           </Button>
         </div>
       </div>

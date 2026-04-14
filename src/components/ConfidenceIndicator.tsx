@@ -10,7 +10,7 @@ interface ConfidenceData {
   signal: "strong_buy" | "buy" | "hold" | "sell" | "strong_sell" | "avoid";
   reliability: "low" | "medium" | "high";
   components: {
-    smartMoneyScore: number;
+    marketActivityScore: number;
     mediaScore: number;
     technicalScore: number;
     riskScore: number;
@@ -113,7 +113,7 @@ export function ConfidenceIndicator({
         {/* Component Scores */}
         <div className="grid grid-cols-2 gap-3">
           {[
-            { label: "Smart Money", value: data.components.smartMoneyScore },
+            { label: "Market Activity", value: data.components.marketActivityScore },
             { label: "Media", value: data.components.mediaScore },
             { label: "Technical", value: data.components.technicalScore },
             { label: "Risk", value: data.components.riskScore },

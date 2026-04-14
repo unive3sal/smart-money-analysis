@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getBirdeyeClient } from "@/services/birdeye/client";
 import { getMediaSentiment } from "@/services/media/sentiment";
 import { calculateConfidence, generateConfidenceSummary } from "@/services/confidence/calculator";
 import { ConfidenceInput } from "@/services/confidence/types";
+import { getMarketDataClient } from "@/services/marketData";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -10,34 +10,30 @@ export const dynamic = "force-dynamic";
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
-    const tokenAddress = searchParams.get("tokenAddress");
-    const tokenSymbol = searchParams.get("tokenSymbol") || "UNKNOWN";
+    const tokenSymbol = searchParams.get("tokenSymbol");
 
-    if (!tokenAddress) {
+    if (!tokenSymbol) {
       return NextResponse.json(
-        { success: false, error: "tokenAddress is required" },
+        { success: false, error: "tokenSymbol is required" },
         { status: 400 }
       );
     }
 
-    const birdeye = getBirdeyeClient();
+    const marketData = getMarketDataClient();
 
-    // Fetch data in parallel
     const [tokenInfo, sentiment] = await Promise.all([
-      birdeye.getTokenInfo(tokenAddress).catch(() => null),
-      getMediaSentiment(tokenSymbol, tokenAddress),
+      marketData.getTokenInfo(tokenSymbol).catch(() => null),
+      getMediaSentiment(tokenSymbol),
     ]);
 
-    // Build confidence input
     const confidenceInput: ConfidenceInput = {
-      smartMoney: {
-        // In production, aggregate from actual smart money tracking
-        netFlow24h: 10000,
-        uniqueBuyers: 5,
-        uniqueSellers: 2,
-        topWalletAction: "buy",
-        avgWinRate: 0.55,
-        recentPnl: 5000,
+      marketActivity: {
+        netFlow24h: 0,
+        uniqueBuyers: 0,
+        uniqueSellers: 0,
+        dominantSide: "hold",
+        avgWinRate: 0,
+        recentPnl: 0,
       },
       media: {
         sentimentScore: sentiment.sentimentScore,
@@ -45,11 +41,11 @@ export async function GET(request: NextRequest) {
         trendingRank: sentiment.trendingRank,
       },
       token: {
-        marketCap: tokenInfo?.marketCap || 0,
-        volume24h: tokenInfo?.v24hUSD || 0,
-        liquidity: tokenInfo?.liquidity || 0,
+        marketCap: 0,
+        volume24h: tokenInfo?.volume24h || 0,
+        liquidity: 0,
         ageHours: 168,
-        holderCount: tokenInfo?.holder || 0,
+        holderCount: 0,
       },
     };
 
@@ -60,11 +56,11 @@ export async function GET(request: NextRequest) {
       success: true,
       data: {
         token: {
-          address: tokenAddress,
-          symbol: tokenSymbol,
-          name: tokenInfo?.name,
+          symbol: tokenInfo?.symbol || tokenSymbol,
+          base: tokenInfo?.base,
+          quote: tokenInfo?.quote,
           price: tokenInfo?.price,
-          marketCap: tokenInfo?.marketCap,
+          exchangeId: tokenInfo?.exchangeId,
         },
         confidence: {
           score: confidence.score,

@@ -8,32 +8,18 @@ services:
     image: smart-money-analysis:latest
     container_name: smart-money-analysis
     ports:
-      - "3000:3000"   # Next.js app
-      - "8001:8001"   # TimesNet service
+      - "3000:3000"
     environment:
-      # Next.js / API configuration
       - NODE_ENV=production
-      - BIRDEYE_API_KEY=${BIRDEYE_API_KEY}
+      - CCXT_EXCHANGE_ID=${CCXT_EXCHANGE_ID:-binance}
+      - CCXT_DEFAULT_QUOTE=${CCXT_DEFAULT_QUOTE:-USDT}
       - LLM_PROXY_URL=${LLM_PROXY_URL:-http://localhost:3000/api/chat}
       - LLM_PROXY_TOKEN=${LLM_PROXY_TOKEN}
-      # TimesNet service
-      - TIMESNET_SERVICE_URL=http://localhost:8001
-      - CHECKPOINT_PATH=/timesnet/checkpoints
+      - TIMESNET_SERVICE_URL=${TIMESNET_SERVICE_URL:-http://host.docker.internal:8000}
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000/", "&&", "curl", "-f", "http://localhost:8001/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:3000/"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 60s
     restart: unless-stopped
-
-# Optional: For GPU support, uncomment below
-# services:
-#   smart-money-analysis:
-#     deploy:
-#       resources:
-#         reservations:
-#           devices:
-#             - driver: nvidia
-#               count: 1
-#               capabilities: [gpu]

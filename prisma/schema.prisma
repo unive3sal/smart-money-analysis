@@ -1,0 +1,256 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+enum WalletChain {
+  EVM
+  SOLANA
+}
+
+enum WalletProvider {
+  METAMASK
+  PHANTOM
+}
+
+enum WalletAuthType {
+  SIGNED_MESSAGE
+  API_KEY
+  VAULT_DELEGATION
+}
+
+enum TaskStatus {
+  ACTIVE
+  PAUSED
+  STOPPED
+  FAILED
+  COMPLETED
+}
+
+enum ExecutionStatus {
+  PENDING
+  SUBMITTED
+  FILLED
+  PARTIAL
+  CANCELLED
+  REJECTED
+  FAILED
+}
+
+enum AnalysisSignal {
+  STRONG_BUY
+  BUY
+  HOLD
+  SELL
+  STRONG_SELL
+  AVOID
+}
+
+enum PositionSide {
+  BUY
+  SELL
+}
+
+model User {
+  id                String             @id @default(cuid())
+  primaryAddress    String?            @unique
+  displayName       String?
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  walletConnections WalletConnection[]
+  tradingVaults     TradingVault[]
+  copyTradeTasks    CopyTradeTask[]
+}
+
+model WalletConnection {
+  id                 String         @id @default(cuid())
+  userId             String
+  address            String
+  chain              WalletChain
+  provider           WalletProvider
+  authType           WalletAuthType
+  label              String?
+  isActive           Boolean        @default(true)
+  authorizationScope String?
+  lastVerifiedAt     DateTime?
+  metadataJson       String?
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+  user               User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tradingVaults      TradingVault[]
+  copyTradeTasks     CopyTradeTask[]
+
+  @@unique([address, chain, provider])
+}
+
+model TradingVault {
+  id                 String           @id @default(cuid())
+  userId             String
+  walletConnectionId String?
+  chain              WalletChain
+  address            String
+  funderAddress      String?
+  label              String
+  authType           WalletAuthType
+  status             String           @default("authorized")
+  metadataJson       String?
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+  user               User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  walletConnection   WalletConnection? @relation(fields: [walletConnectionId], references: [id], onDelete: SetNull)
+  copyTradeTasks     CopyTradeTask[]
+
+  @@unique([address, chain])
+}
+
+model CopyTradeTask {
+  id                         String                   @id @default(cuid())
+  userId                     String
+  walletConnectionId         String?
+  tradingVaultId             String?
+  traderAddress              String
+  traderChain                WalletChain             @default(EVM)
+  status                     TaskStatus              @default(ACTIVE)
+  name                       String
+  allocationUsd             Float
+  maxSlippageBps            Int                      @default(150)
+  takeProfitPercent         Float?
+  stopLossPercent           Float?
+  autoStopAfterTakeProfit   Boolean                  @default(true)
+  autoStopAfterStopLoss     Boolean                  @default(true)
+  timesnetEnabled           Boolean                  @default(true)
+  timesnetMinimumConfidence Float                    @default(0.55)
+  timesnetRequiredSignal    AnalysisSignal?          @default(BUY)
+  notes                     String?
+  lastProcessedCursor       String?
+  lastAutoStopReason        String?
+  createdAt                 DateTime                 @default(now())
+  updatedAt                 DateTime                 @updatedAt
+  user                      User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  walletConnection          WalletConnection?        @relation(fields: [walletConnectionId], references: [id], onDelete: SetNull)
+  tradingVault              TradingVault?            @relation(fields: [tradingVaultId], references: [id], onDelete: SetNull)
+  positions                 CopyTradePosition[]
+  executions                CopyTradeExecution[]
+
+  @@index([traderAddress, status])
+}
+
+model CopyTradePosition {
+  id               String         @id @default(cuid())
+  taskId           String
+  marketId         String
+  tokenId          String
+  side             PositionSide
+  shares           Float
+  averageEntryPrice Float
+  currentPrice     Float
+  realizedPnl      Float          @default(0)
+  unrealizedPnl    Float          @default(0)
+  status           String         @default("open")
+  openedAt         DateTime       @default(now())
+  closedAt         DateTime?
+  task             CopyTradeTask  @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@index([taskId, status])
+}
+
+model CopyTradeExecution {
+  id                     String           @id @default(cuid())
+  taskId                 String
+  marketId               String
+  tokenId                String
+  traderActivityEventId  String?
+  side                   PositionSide
+  status                 ExecutionStatus  @default(PENDING)
+  orderType              String           @default("GTC")
+  price                  Float
+  size                   Float
+  executedPrice          Float?
+  transactionHash        String?
+  rejectionReason        String?
+  metadataJson           String?
+  createdAt              DateTime         @default(now())
+  updatedAt              DateTime         @updatedAt
+  task                   CopyTradeTask    @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  traderActivityEvent    TraderActivityEvent? @relation(fields: [traderActivityEventId], references: [id], onDelete: SetNull)
+
+  @@index([taskId, status])
+}
+
+model TraderProfile {
+  id                 String               @id @default(cuid())
+  address            String               @unique
+  chain              WalletChain          @default(EVM)
+  displayName        String?
+  avatarUrl          String?
+  realizedPnl        Float                @default(0)
+  unrealizedPnl      Float                @default(0)
+  winRate            Float                @default(0)
+  totalTrades        Int                  @default(0)
+  copiedByTaskCount  Int                  @default(0)
+  followabilityScore Float                @default(0)
+  updatedAt          DateTime             @updatedAt
+  activities         TraderActivityEvent[]
+}
+
+model TraderActivityEvent {
+  id               String              @id @default(cuid())
+  externalId       String?             @unique
+  traderProfileId  String?
+  traderAddress    String
+  marketId         String
+  tokenId          String
+  side             PositionSide
+  outcome          String
+  price            Float
+  size             Float
+  timestamp        DateTime
+  transactionHash  String?
+  rawJson          String?
+  createdAt        DateTime            @default(now())
+  traderProfile    TraderProfile?      @relation(fields: [traderProfileId], references: [id], onDelete: SetNull)
+  executions       CopyTradeExecution[]
+
+  @@index([traderAddress, timestamp])
+}
+
+model LeaderboardSnapshot {
+  id               String   @id @default(cuid())
+  address          String
+  displayName      String?
+  rank             Int
+  realizedPnl      Float
+  unrealizedPnl    Float
+  winRate          Float
+  totalTrades      Int
+  activityScore    Float
+  capturedAt       DateTime @default(now())
+
+  @@index([capturedAt, rank])
+}
+
+model MarketAnalysisSnapshot {
+  id                 String         @id @default(cuid())
+  marketId           String
+  tokenId            String
+  question           String
+  currentPrice       Float
+  priceHistoryJson   String
+  timesnetSummary    String
+  timesnetSignal     AnalysisSignal
+  timesnetConfidence Float
+  analysisJson       String?
+  capturedAt         DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+
+  @@unique([marketId, tokenId])
+}

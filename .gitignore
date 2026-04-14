@@ -48,3 +48,9 @@ venv/
 .agents/
 .claude/
 skills-lock.json
+
+# Local database / generated ORM client
+dev.db*
+src/generated/
+
+.data/

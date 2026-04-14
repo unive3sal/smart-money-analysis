@@ -65,7 +65,6 @@ class TimesNetForecaster:
         self.pred_len = 12
         self.feature_dim = 18
 
-        # Default checkpoint path
         if checkpoint_path is None:
             checkpoint_path = os.path.join(
                 CHECKPOINT_BASE_PATH,
@@ -84,7 +83,6 @@ class TimesNetForecaster:
             Model = load_timesnet_model_class()
             import argparse
 
-            # Create args namespace matching training config
             args = argparse.Namespace(
                 task_name="long_term_forecast",
                 seq_len=self.seq_len,
@@ -127,14 +125,7 @@ class TimesNetForecaster:
     def preprocess(self, data: pd.DataFrame) -> Tuple[np.ndarray, np.ndarray]:
         """
         Preprocess input data for the model
-
-        Args:
-            data: DataFrame with columns matching training features
-
-        Returns:
-            Tuple of (features, time_features)
         """
-        # Expected columns (excluding date)
         feature_cols = [
             "price",
             "price_change_1h",
@@ -156,7 +147,6 @@ class TimesNetForecaster:
             "OT",
         ]
 
-        # Ensure we have required columns
         available_cols = [c for c in feature_cols if c in data.columns]
 
         if len(available_cols) < 10:
@@ -164,18 +154,12 @@ class TimesNetForecaster:
                 f"Insufficient features. Need at least 10, got {len(available_cols)}"
             )
 
-        # Fill missing columns with zeros
         for col in feature_cols:
             if col not in data.columns:
                 data[col] = 0.0
 
-        # Extract features
         features = data[feature_cols].values.astype(np.float32)
-
-        # Scale features
         features = self.scaler.fit_transform(features)
-
-        # Create time features (simplified - just position encoding)
         time_features = np.zeros((len(data), 4), dtype=np.float32)
 
         return features, time_features
@@ -185,28 +169,17 @@ class TimesNetForecaster:
     ) -> ForecastResult:
         """
         Generate price forecast
-
-        Args:
-            data: DataFrame with at least seq_len rows of historical data
-            current_price: Current price for calculating percentage change
-
-        Returns:
-            ForecastResult with predictions
         """
         if not self.model_loaded:
             self.load_model()
 
         if not self.model_loaded:
-            # Return placeholder if model not available
             return self._placeholder_forecast(data, current_price)
 
         try:
-            # Preprocess data
             features, time_features = self.preprocess(data)
 
-            # Take last seq_len points
             if len(features) < self.seq_len:
-                # Pad with first value
                 pad_len = self.seq_len - len(features)
                 features = np.vstack([np.tile(features[0], (pad_len, 1)), features])
                 time_features = np.vstack(
@@ -216,11 +189,9 @@ class TimesNetForecaster:
             features = features[-self.seq_len :]
             time_features = time_features[-self.seq_len :]
 
-            # Convert to tensors
             x = torch.FloatTensor(features).unsqueeze(0).to(self.device)
             x_mark = torch.FloatTensor(time_features).unsqueeze(0).to(self.device)
 
-            # Create decoder input (zeros for prediction)
             dec_inp = (
                 torch.zeros((1, self.pred_len + 24, self.feature_dim))
                 .float()
@@ -228,19 +199,15 @@ class TimesNetForecaster:
             )
             dec_mark = torch.zeros((1, self.pred_len + 24, 4)).float().to(self.device)
 
-            # Run inference
             with torch.no_grad():
                 output = self.model(x, x_mark, dec_inp, dec_mark)
 
-            # Extract predictions (last column is OT/price)
             predictions = output[0, :, -1].cpu().numpy()
 
-            # Inverse transform predictions
             dummy = np.zeros((len(predictions), self.feature_dim))
             dummy[:, -1] = predictions
             predictions = self.scaler.inverse_transform(dummy)[:, -1]
 
-            # Calculate metrics
             if current_price is None:
                 current_price = (
                     data["price"].iloc[-1]
@@ -251,7 +218,6 @@ class TimesNetForecaster:
             final_price = predictions[-1]
             price_change_pct = ((final_price - current_price) / current_price) * 100
 
-            # Determine direction and confidence
             if abs(price_change_pct) < 1:
                 direction = "neutral"
                 confidence = 0.5
@@ -281,7 +247,6 @@ class TimesNetForecaster:
         if current_price is None:
             current_price = data["price"].iloc[-1] if "price" in data.columns else 100.0
 
-        # Simple momentum-based placeholder
         if "price" in data.columns and len(data) >= 2:
             momentum = (
                 (data["price"].iloc[-1] - data["price"].iloc[-12])
@@ -289,7 +254,7 @@ class TimesNetForecaster:
                 if len(data) >= 12
                 else 0
             )
-            predicted_change = momentum * 0.5 * 100  # Dampen momentum
+            predicted_change = momentum * 0.5 * 100
         else:
             predicted_change = 0.0
 
@@ -323,7 +288,6 @@ class TimesNetAnomalyDetector:
         self.feature_dim = 14
         self.anomaly_ratio = 0.15
 
-        # Default checkpoint path
         if checkpoint_path is None:
             checkpoint_path = os.path.join(
                 CHECKPOINT_BASE_PATH,
@@ -343,7 +307,6 @@ class TimesNetAnomalyDetector:
             Model = load_timesnet_model_class()
             import argparse
 
-            # Create args namespace matching training config
             args = argparse.Namespace(
                 task_name="anomaly_detection",
                 seq_len=self.seq_len,
@@ -374,8 +337,6 @@ class TimesNetAnomalyDetector:
                 self.model.load_state_dict(state_dict)
                 self.model.eval()
                 self.model_loaded = True
-                # Default threshold based on training
-                self.threshold = 0.02  # Adjust based on actual training results
                 print(f"Anomaly detection model loaded from {self.checkpoint_path}")
             else:
                 print(f"Warning: Checkpoint not found at {self.checkpoint_path}")
@@ -386,16 +347,7 @@ class TimesNetAnomalyDetector:
             self.model_loaded = False
 
     def preprocess(self, data: pd.DataFrame) -> np.ndarray:
-        """
-        Preprocess input data for anomaly detection
-
-        Args:
-            data: DataFrame with anomaly detection features
-
-        Returns:
-            Preprocessed feature array
-        """
-        # Expected columns for anomaly detection
+        """Preprocess input data for anomaly detection"""
         feature_cols = [
             "price",
             "volume",
@@ -413,234 +365,192 @@ class TimesNetAnomalyDetector:
             "sm_confidence",
         ]
 
-        # Use available columns
-        available_cols = [c for c in feature_cols if c in data.columns]
-
-        if len(available_cols) < 5:
-            raise ValueError(f"Insufficient features for anomaly detection")
-
-        # Fill missing columns
         for col in feature_cols:
             if col not in data.columns:
                 data[col] = 0.0
 
         features = data[feature_cols].values.astype(np.float32)
-        features = np.nan_to_num(features)
-
-        # Scale features
         features = self.scaler.fit_transform(features)
-
         return features
 
     def detect(self, data: pd.DataFrame) -> AnomalyResult:
-        """
-        Detect anomalies in the data
-
-        Args:
-            data: DataFrame with historical data
-
-        Returns:
-            AnomalyResult with anomaly scores and flags
-        """
+        """Detect anomalies in token data"""
         if not self.model_loaded:
             self.load_model()
 
-        if not self.model_loaded:
-            return self._placeholder_detection(data)
-
         try:
-            # Preprocess data
             features = self.preprocess(data)
 
-            # Need at least seq_len points
             if len(features) < self.seq_len:
                 pad_len = self.seq_len - len(features)
                 features = np.vstack([np.tile(features[0], (pad_len, 1)), features])
 
-            # Calculate anomaly scores using reconstruction error
-            all_scores = []
+            features = features[-self.seq_len :]
+            x = torch.FloatTensor(features).unsqueeze(0).to(self.device)
 
-            for i in range(0, len(features) - self.seq_len + 1, self.seq_len // 2):
-                window = features[i : i + self.seq_len]
-                x = torch.FloatTensor(window).unsqueeze(0).to(self.device)
+            if not self.model_loaded:
+                raise RuntimeError("Anomaly model unavailable")
 
-                with torch.no_grad():
-                    output = self.model(x, None, None, None)
+            with torch.no_grad():
+                output = self.model(x, None, None, None)
 
-                # Calculate reconstruction error
-                error = torch.mean((x - output) ** 2, dim=-1)
-                scores = error[0].cpu().numpy()
-                all_scores.extend(scores.tolist())
+            reconstructed = output[0].cpu().numpy()
+            mse = np.mean((features - reconstructed) ** 2, axis=1)
+            threshold = np.quantile(mse, 1 - self.anomaly_ratio)
+            is_anomaly = mse > threshold
+            anomaly_indices = np.where(is_anomaly)[0].tolist()
+            anomaly_ratio = float(np.mean(is_anomaly))
 
-            # Pad to match original length
-            while len(all_scores) < len(data):
-                all_scores.append(all_scores[-1] if all_scores else 0.0)
-            all_scores = all_scores[: len(data)]
-
-            # Determine threshold and anomalies
-            if self.threshold is None:
-                self.threshold = np.percentile(
-                    all_scores, 100 - self.anomaly_ratio * 100
+            if anomaly_ratio > 0.2:
+                interpretation = (
+                    f"High anomaly rate ({anomaly_ratio * 100:.1f}%) - significant market irregularities detected"
                 )
-
-            is_anomaly = [s > self.threshold for s in all_scores]
-            anomaly_indices = [i for i, a in enumerate(is_anomaly) if a]
-            anomaly_ratio = sum(is_anomaly) / len(is_anomaly)
-
-            # Generate interpretation
-            interpretation = self._generate_interpretation(
-                all_scores, is_anomaly, anomaly_ratio, data
-            )
+            elif anomaly_ratio > 0.1:
+                interpretation = (
+                    f"Moderate anomaly rate ({anomaly_ratio * 100:.1f}%) - some unusual activity present"
+                )
+            elif anomaly_ratio > 0:
+                interpretation = (
+                    f"Low anomaly rate ({anomaly_ratio * 100:.1f}%) - minor irregularities detected"
+                )
+            else:
+                interpretation = "No significant anomalies detected. Market behavior appears normal."
 
             return AnomalyResult(
-                anomaly_scores=all_scores,
-                is_anomaly=is_anomaly,
-                anomaly_ratio=float(anomaly_ratio),
-                max_anomaly_score=float(max(all_scores)),
+                anomaly_scores=mse.tolist(),
+                is_anomaly=is_anomaly.tolist(),
+                anomaly_ratio=anomaly_ratio,
+                max_anomaly_score=float(np.max(mse)) if len(mse) else 0.0,
                 anomaly_indices=anomaly_indices,
                 interpretation=interpretation,
             )
 
         except Exception as e:
             print(f"Anomaly detection error: {e}")
-            return self._placeholder_detection(data)
-
-    def _placeholder_detection(self, data: pd.DataFrame) -> AnomalyResult:
-        """Generate placeholder detection when model not available"""
-        n = len(data)
-        scores = [0.01] * n
-
-        # Simple heuristic: flag high volatility or volume spikes
-        if "volatility_1h" in data.columns:
-            vol_mean = data["volatility_1h"].mean()
-            vol_std = data["volatility_1h"].std()
-            for i, v in enumerate(data["volatility_1h"]):
-                if v > vol_mean + 2 * vol_std:
-                    scores[i] = 0.05
-
-        threshold = 0.02
-        is_anomaly = [s > threshold for s in scores]
-
-        return AnomalyResult(
-            anomaly_scores=scores,
-            is_anomaly=is_anomaly,
-            anomaly_ratio=sum(is_anomaly) / len(is_anomaly),
-            max_anomaly_score=max(scores),
-            anomaly_indices=[i for i, a in enumerate(is_anomaly) if a],
-            interpretation="Placeholder detection - model not loaded",
-        )
-
-    def _generate_interpretation(
-        self,
-        scores: List[float],
-        is_anomaly: List[bool],
-        anomaly_ratio: float,
-        data: pd.DataFrame,
-    ) -> str:
-        """Generate human-readable interpretation of anomaly detection"""
-
-        n_anomalies = sum(is_anomaly)
-
-        if n_anomalies == 0:
-            return "No significant anomalies detected. Market behavior appears normal."
-
-        # Analyze anomaly characteristics
-        interpretations = []
-
-        if anomaly_ratio > 0.2:
-            interpretations.append(
-                f"High anomaly rate ({anomaly_ratio * 100:.1f}%) - significant market irregularities detected"
+            return AnomalyResult(
+                anomaly_scores=[0.0] * min(len(data), self.seq_len),
+                is_anomaly=[False] * min(len(data), self.seq_len),
+                anomaly_ratio=0.0,
+                max_anomaly_score=0.0,
+                anomaly_indices=[],
+                interpretation="Unable to compute anomalies - returning safe default.",
             )
-        elif anomaly_ratio > 0.1:
-            interpretations.append(
-                f"Moderate anomaly rate ({anomaly_ratio * 100:.1f}%) - some unusual activity present"
-            )
-        else:
-            interpretations.append(
-                f"Low anomaly rate ({anomaly_ratio * 100:.1f}%) - minor irregularities detected"
-            )
-
-        # Check for clustered anomalies
-        anomaly_indices = [i for i, a in enumerate(is_anomaly) if a]
-        if len(anomaly_indices) >= 3:
-            # Check if anomalies are clustered
-            gaps = [
-                anomaly_indices[i + 1] - anomaly_indices[i]
-                for i in range(len(anomaly_indices) - 1)
-            ]
-            if gaps and max(gaps) <= 3:
-                interpretations.append(
-                    "Anomalies are clustered - possible sustained unusual activity or whale movement"
-                )
-
-        # Check recent anomalies
-        recent_anomalies = (
-            sum(is_anomaly[-12:]) if len(is_anomaly) >= 12 else sum(is_anomaly)
-        )
-        if recent_anomalies > 3:
-            interpretations.append(
-                "Recent spike in anomalies - current market conditions warrant attention"
-            )
-
-        return " | ".join(interpretations)
 
 
 class TimesNetService:
-    """
-    Combined service for TimesNet predictions
-    Provides both forecasting and anomaly detection
-    """
+    """Combined TimesNet service for forecasting and anomaly detection"""
 
     def __init__(self):
         self.forecaster = TimesNetForecaster()
         self.anomaly_detector = TimesNetAnomalyDetector()
-        self.version = "1.0.0"
+        self.version = "2.0.0"
+        self.is_ready = False
 
     def initialize(self):
-        """Load all models"""
+        """Initialize service models"""
         self.forecaster.load_model()
         self.anomaly_detector.load_model()
+        self.is_ready = True
 
-    @property
-    def is_ready(self) -> bool:
-        """Check if models are loaded"""
-        return self.forecaster.model_loaded or self.anomaly_detector.model_loaded
+    def _build_prediction_output(
+        self, forecast: ForecastResult, current_price: Optional[float]
+    ) -> Dict:
+        baseline_price = float(current_price) if current_price else 0.0
+        predicted_prices = forecast.predicted_prices[: max(forecast.forecast_horizon, 16)]
+        if not predicted_prices:
+            predicted_prices = [baseline_price]
+
+        return_30m_index = min(len(predicted_prices), 2) - 1
+        return_4h_index = min(len(predicted_prices), 16) - 1
+        price_30m = predicted_prices[return_30m_index]
+        price_4h = predicted_prices[return_4h_index]
+        window_4h = predicted_prices[:16]
+
+        if baseline_price > 0:
+            expected_return_30m = ((price_30m - baseline_price) / baseline_price) * 100
+            expected_return_4h = ((price_4h - baseline_price) / baseline_price) * 100
+            min_price_4h = min(window_4h) if window_4h else baseline_price
+            expected_drawdown_4h = max(
+                0.0, ((baseline_price - min_price_4h) / baseline_price) * 100
+            )
+        else:
+            expected_return_30m = 0.0
+            expected_return_4h = 0.0
+            expected_drawdown_4h = 0.0
+
+        if abs(expected_return_4h) < 1:
+            confidence = 0.5
+        else:
+            confidence = min(0.95, 0.5 + abs(expected_return_4h) / 20)
+
+        copy_risk_score = max(
+            0.0,
+            min(1.0, 0.35 + expected_drawdown_4h / 20 - expected_return_4h / 40),
+        )
+
+        reason_codes: List[str] = []
+        if expected_return_30m >= 1:
+            reason_codes.append("short_term_return_positive")
+        elif expected_return_30m <= -1:
+            reason_codes.append("short_term_return_negative")
+        else:
+            reason_codes.append("short_term_return_flat")
+
+        if expected_return_4h >= 2:
+            reason_codes.append("medium_term_return_positive")
+        elif expected_return_4h <= -2:
+            reason_codes.append("medium_term_return_negative")
+        else:
+            reason_codes.append("medium_term_return_flat")
+
+        if expected_drawdown_4h >= 5:
+            reason_codes.append("drawdown_elevated")
+        elif expected_drawdown_4h > 0:
+            reason_codes.append("drawdown_present")
+        else:
+            reason_codes.append("drawdown_limited")
+
+        if confidence >= 0.75:
+            reason_codes.append("confidence_high")
+        elif confidence >= 0.6:
+            reason_codes.append("confidence_medium")
+        else:
+            reason_codes.append("confidence_low")
+
+        return {
+            "modelVersion": self.version,
+            "copyRiskScore": round(float(copy_risk_score), 4),
+            "expectedReturn30m": round(float(expected_return_30m), 4),
+            "expectedReturn4h": round(float(expected_return_4h), 4),
+            "expectedDrawdown4h": round(float(expected_drawdown_4h), 4),
+            "confidence": round(float(confidence), 4),
+            "reasonCodes": reason_codes,
+        }
+
+    def _prediction_signal(self, prediction: Dict) -> str:
+        if prediction["expectedReturn4h"] > 1 and prediction["copyRiskScore"] < 0.4:
+            return "bullish"
+        if prediction["expectedReturn4h"] < -1:
+            return "bearish"
+        if prediction["copyRiskScore"] >= 0.7:
+            return "high_risk"
+        return "neutral"
 
     def get_full_analysis(
-        self,
-        data: pd.DataFrame,
-        token_symbol: str = "UNKNOWN",
-        current_price: float = None,
+        self, data: pd.DataFrame, token_symbol: str, current_price: float = None
     ) -> Dict:
         """
-        Get complete TimesNet analysis including forecast and anomaly detection
-
-        Args:
-            data: Historical data DataFrame
-            token_symbol: Token symbol for context
-            current_price: Current price (optional)
-
-        Returns:
-            Dictionary with forecast and anomaly results
+        Get complete TimesNet analysis combining forecast and anomaly detection.
         """
         forecast = self.forecaster.predict(data, current_price)
         anomalies = self.anomaly_detector.detect(data)
+        prediction = self._build_prediction_output(forecast, current_price)
 
-        # Combine into comprehensive analysis
         return {
             "token": token_symbol,
             "timestamp": pd.Timestamp.now().isoformat(),
             "model_version": self.version,
-            "forecast": {
-                "predicted_change_pct": forecast.predicted_change_pct,
-                "direction": forecast.direction,
-                "confidence": forecast.confidence,
-                "horizon_periods": forecast.forecast_horizon,
-                "horizon_hours": forecast.forecast_horizon * 0.25,  # 15-min intervals
-                "predicted_prices": forecast.predicted_prices[
-                    :5
-                ],  # First 5 predictions
-            },
+            "prediction": prediction,
             "anomaly_detection": {
                 "anomaly_ratio": anomalies.anomaly_ratio,
                 "max_anomaly_score": anomalies.max_anomaly_score,
@@ -649,30 +559,26 @@ class TimesNetService:
                 else sum(anomalies.is_anomaly),
                 "interpretation": anomalies.interpretation,
             },
-            "combined_signal": self._generate_combined_signal(forecast, anomalies),
+            "combined_signal": self._generate_combined_signal(prediction, anomalies),
         }
 
     def _generate_combined_signal(
-        self, forecast: ForecastResult, anomalies: AnomalyResult
+        self, prediction: Dict, anomalies: AnomalyResult
     ) -> Dict:
-        """Generate combined trading signal from forecast and anomaly detection"""
+        """Generate combined trading signal from prediction and anomaly detection"""
 
-        # Base signal from forecast
-        if forecast.direction == "up" and forecast.confidence > 0.6:
-            base_signal = "bullish"
-            base_strength = forecast.confidence
-        elif forecast.direction == "down" and forecast.confidence > 0.6:
-            base_signal = "bearish"
-            base_strength = forecast.confidence
+        signal = self._prediction_signal(prediction)
+        if signal == "bullish" and prediction["confidence"] > 0.6:
+            strength = prediction["confidence"] * (1 - prediction["copyRiskScore"])
+        elif signal == "bearish" and prediction["confidence"] > 0.6:
+            strength = prediction["confidence"]
         else:
-            base_signal = "neutral"
-            base_strength = 0.5
+            strength = max(0.3, 1 - prediction["copyRiskScore"])
 
-        # Adjust for anomalies
         warnings = []
 
         if anomalies.anomaly_ratio > 0.2:
-            base_strength *= 0.7  # Reduce confidence with high anomalies
+            strength *= 0.7
             warnings.append("High anomaly rate detected - proceed with caution")
 
         recent_anomalies = (
@@ -683,38 +589,45 @@ class TimesNetService:
                 "Recent anomaly cluster - possible whale activity or market manipulation"
             )
 
-        # Determine action
         if (
-            base_signal == "bullish"
-            and base_strength > 0.65
+            signal == "bullish"
+            and strength > 0.4
             and anomalies.anomaly_ratio < 0.15
         ):
             action = "consider_buy"
-            reasoning = f"Bullish forecast ({forecast.predicted_change_pct:+.2f}%) with normal market conditions"
+            reasoning = (
+                f"Positive 4h return estimate ({prediction['expectedReturn4h']:+.2f}%) "
+                f"with controlled copy risk ({prediction['copyRiskScore']:.2f})"
+            )
         elif (
-            base_signal == "bearish"
-            and base_strength > 0.65
+            signal == "bearish"
+            and strength > 0.6
             and anomalies.anomaly_ratio < 0.15
         ):
             action = "consider_sell"
-            reasoning = f"Bearish forecast ({forecast.predicted_change_pct:+.2f}%) with normal market conditions"
+            reasoning = (
+                f"Negative 4h return estimate ({prediction['expectedReturn4h']:+.2f}%) "
+                f"with {prediction['confidence'] * 100:.0f}% confidence"
+            )
         elif anomalies.anomaly_ratio > 0.2:
             action = "monitor"
             reasoning = "Unusual market activity detected - monitoring recommended"
         else:
             action = "hold"
-            reasoning = "No clear directional signal - maintain current position"
+            reasoning = (
+                f"No strong edge: 4h return {prediction['expectedReturn4h']:+.2f}% and "
+                f"copy risk {prediction['copyRiskScore']:.2f}"
+            )
 
         return {
-            "signal": base_signal,
-            "strength": round(base_strength, 3),
+            "signal": signal,
+            "strength": round(min(max(float(strength), 0.0), 1.0), 3),
             "action": action,
             "reasoning": reasoning,
             "warnings": warnings,
         }
 
 
-# Singleton instance
 _service_instance = None
 
 

@@ -93,17 +93,22 @@ class PredictionRequest(BaseModel):
     )
 
 
+class PredictionOutput(BaseModel):
+    modelVersion: str
+    copyRiskScore: float = Field(ge=0.0, le=1.0)
+    expectedReturn30m: float
+    expectedReturn4h: float
+    expectedDrawdown4h: float = Field(ge=0.0)
+    confidence: float = Field(ge=0.0, le=1.0)
+    reasonCodes: List[str]
+
+
 class ForecastResponse(BaseModel):
     """Response for forecast endpoint"""
 
     token_address: str
     token_symbol: str
-    predicted_change_pct: float
-    direction: str
-    confidence: float
-    forecast_horizon_hours: float
-    predicted_prices: List[float]
-    model_version: str
+    prediction: PredictionOutput
     timestamp: str
 
 
@@ -126,11 +131,10 @@ class FullAnalysisResponse(BaseModel):
 
     token_address: str
     token_symbol: str
-    forecast: Dict[str, Any]
+    prediction: PredictionOutput
     anomaly_detection: Dict[str, Any]
     combined_signal: Dict[str, Any]
     llm_analysis: Optional[str] = None
-    model_version: str
     timestamp: str
 
 
@@ -140,32 +144,112 @@ class HealthResponse(BaseModel):
     version: str
 
 
+# ============== Helpers ==============
+
+
+def build_prediction_output(
+    predicted_prices: List[float], current_price: float, model_version: str
+) -> Dict[str, Any]:
+    baseline_price = float(current_price) if current_price else 0.0
+    if not predicted_prices:
+        predicted_prices = [baseline_price]
+
+    return_30m_index = min(len(predicted_prices), 2) - 1
+    return_4h_index = min(len(predicted_prices), 16) - 1
+    price_30m = predicted_prices[return_30m_index]
+    price_4h = predicted_prices[return_4h_index]
+    window_4h = predicted_prices[:16]
+
+    if baseline_price > 0:
+        expected_return_30m = ((price_30m - baseline_price) / baseline_price) * 100
+        expected_return_4h = ((price_4h - baseline_price) / baseline_price) * 100
+        min_price_4h = min(window_4h) if window_4h else baseline_price
+        expected_drawdown_4h = max(
+            0.0, ((baseline_price - min_price_4h) / baseline_price) * 100
+        )
+    else:
+        expected_return_30m = 0.0
+        expected_return_4h = 0.0
+        expected_drawdown_4h = 0.0
+
+    if abs(expected_return_4h) < 1:
+        confidence = 0.5
+    else:
+        confidence = min(0.95, 0.5 + abs(expected_return_4h) / 20)
+
+    copy_risk_score = max(
+        0.0, min(1.0, 0.35 + expected_drawdown_4h / 20 - expected_return_4h / 40)
+    )
+
+    reason_codes: List[str] = []
+    if expected_return_30m >= 1:
+        reason_codes.append("short_term_return_positive")
+    elif expected_return_30m <= -1:
+        reason_codes.append("short_term_return_negative")
+    else:
+        reason_codes.append("short_term_return_flat")
+
+    if expected_return_4h >= 2:
+        reason_codes.append("medium_term_return_positive")
+    elif expected_return_4h <= -2:
+        reason_codes.append("medium_term_return_negative")
+    else:
+        reason_codes.append("medium_term_return_flat")
+
+    if expected_drawdown_4h >= 5:
+        reason_codes.append("drawdown_elevated")
+    elif expected_drawdown_4h > 0:
+        reason_codes.append("drawdown_present")
+    else:
+        reason_codes.append("drawdown_limited")
+
+    if confidence >= 0.75:
+        reason_codes.append("confidence_high")
+    elif confidence >= 0.6:
+        reason_codes.append("confidence_medium")
+    else:
+        reason_codes.append("confidence_low")
+
+    return {
+        "modelVersion": model_version,
+        "copyRiskScore": round(float(copy_risk_score), 4),
+        "expectedReturn30m": round(float(expected_return_30m), 4),
+        "expectedReturn4h": round(float(expected_return_4h), 4),
+        "expectedDrawdown4h": round(float(expected_drawdown_4h), 4),
+        "confidence": round(float(confidence), 4),
+        "reasonCodes": reason_codes,
+    }
+
+
+def prediction_signal(prediction: Dict[str, Any]) -> str:
+    if prediction["expectedReturn4h"] > 1 and prediction["copyRiskScore"] < 0.4:
+        return "bullish"
+    if prediction["expectedReturn4h"] < -1:
+        return "bearish"
+    if prediction["copyRiskScore"] >= 0.7:
+        return "high_risk"
+    return "neutral"
+
+
 # ============== LLM Integration ==============
 
 
 async def get_llm_analysis(
-    token_symbol: str, forecast: Dict, anomalies: Dict, combined_signal: Dict
+    token_symbol: str, prediction: Dict, anomalies: Dict, combined_signal: Dict
 ) -> str:
     """
     Get LLM interpretation of TimesNet results
-
-    Args:
-        token_symbol: Token symbol
-        forecast: Forecast results
-        anomalies: Anomaly detection results
-        combined_signal: Combined trading signal
-
-    Returns:
-        LLM-generated analysis text
     """
 
     prompt = f"""Analyze the following TimesNet model predictions for {token_symbol}:
 
-**Price Forecast:**
-- Predicted Change: {forecast["predicted_change_pct"]:+.2f}%
-- Direction: {forecast["direction"]}
-- Confidence: {forecast["confidence"] * 100:.1f}%
-- Forecast Horizon: {forecast["horizon_hours"]:.1f} hours
+**Prediction Output:**
+- Copy Risk Score: {prediction["copyRiskScore"]:.2f}
+- Expected Return (30m): {prediction["expectedReturn30m"]:+.2f}%
+- Expected Return (4h): {prediction["expectedReturn4h"]:+.2f}%
+- Expected Drawdown (4h): {prediction["expectedDrawdown4h"]:.2f}%
+- Confidence: {prediction["confidence"] * 100:.1f}%
+- Reason Codes: {", ".join(prediction["reasonCodes"])}
 
 **Anomaly Detection:**
 - Anomaly Ratio: {anomalies["anomaly_ratio"] * 100:.1f}%
@@ -198,18 +282,25 @@ Please provide a concise analysis (2-3 sentences) interpreting these results for
                 if result.get("success") and result.get("data", {}).get("content"):
                     return result["data"]["content"]
 
-            return f"TimesNet predicts {forecast['direction']} movement ({forecast['predicted_change_pct']:+.2f}%) with {forecast['confidence'] * 100:.0f}% confidence. {combined_signal['reasoning']}"
+            return (
+                f"TimesNet estimates {prediction['expectedReturn4h']:+.2f}% over 4h with "
+                f"{prediction['confidence'] * 100:.0f}% confidence and copy risk "
+                f"{prediction['copyRiskScore']:.2f}. {combined_signal['reasoning']}"
+            )
 
     except Exception as e:
         print(f"LLM analysis error: {e}")
-        return f"TimesNet predicts {forecast['direction']} movement ({forecast['predicted_change_pct']:+.2f}%) with {forecast['confidence'] * 100:.0f}% confidence. {combined_signal['reasoning']}"
+        return (
+            f"TimesNet estimates {prediction['expectedReturn4h']:+.2f}% over 4h with "
+            f"{prediction['confidence'] * 100:.0f}% confidence and copy risk "
+            f"{prediction['copyRiskScore']:.2f}. {combined_signal['reasoning']}"
+        )
 
 
 def data_to_dataframe(data: TokenData) -> pd.DataFrame:
     """Convert TokenData to pandas DataFrame"""
     df_dict = {"price": data.price}
 
-    # Add optional fields if present
     optional_fields = [
         "volume",
         "price_change_1h",
@@ -235,7 +326,6 @@ def data_to_dataframe(data: TokenData) -> pd.DataFrame:
 
     df = pd.DataFrame(df_dict)
 
-    # Add derived columns if missing
     if "OT" not in df.columns:
         df["OT"] = df["price"].shift(-1).fillna(df["price"].iloc[-1])
 
@@ -266,10 +356,7 @@ async def health_check():
 @app.post("/forecast", response_model=ForecastResponse)
 async def forecast(request: PredictionRequest):
     """
-    Generate price forecast for a token
-
-    Requires historical data with at least 'price' field.
-    Returns predicted price change, direction, and confidence.
+    Generate risk-oriented prediction output for a token.
     """
     try:
         service = get_timesnet_service()
@@ -282,16 +369,16 @@ async def forecast(request: PredictionRequest):
 
         current_price = df["price"].iloc[-1]
         result = service.forecaster.predict(df, current_price)
+        prediction = build_prediction_output(
+            result.predicted_prices[: max(request.horizon, 16)],
+            current_price,
+            service.version,
+        )
 
         return ForecastResponse(
             token_address=request.token_address,
             token_symbol=request.token_symbol,
-            predicted_change_pct=round(result.predicted_change_pct, 4),
-            direction=result.direction,
-            confidence=round(result.confidence, 4),
-            forecast_horizon_hours=result.forecast_horizon * 0.25,
-            predicted_prices=result.predicted_prices[: request.horizon],
-            model_version=service.version,
+            prediction=PredictionOutput(**prediction),
             timestamp=datetime.utcnow().isoformat(),
         )
 
@@ -304,10 +391,7 @@ async def forecast(request: PredictionRequest):
 @app.post("/anomaly", response_model=AnomalyResponse)
 async def detect_anomalies(request: PredictionRequest):
     """
-    Detect anomalies in token trading data
-
-    Identifies unusual patterns that may indicate whale activity,
-    market manipulation, or trading opportunities.
+    Detect anomalies in token trading data.
     """
     try:
         service = get_timesnet_service()
@@ -330,7 +414,7 @@ async def detect_anomalies(request: PredictionRequest):
             if len(result.is_anomaly) >= 12
             else sum(result.is_anomaly),
             interpretation=result.interpretation,
-            anomaly_indices=result.anomaly_indices[-20:],  # Last 20 anomaly indices
+            anomaly_indices=result.anomaly_indices[-20:],
             model_version=service.version,
             timestamp=datetime.utcnow().isoformat(),
         )
@@ -346,10 +430,7 @@ async def detect_anomalies(request: PredictionRequest):
 @app.post("/analyze", response_model=FullAnalysisResponse)
 async def full_analysis(request: PredictionRequest):
     """
-    Get complete TimesNet analysis with LLM interpretation
-
-    Combines forecasting and anomaly detection with intelligent
-    analysis from LLM. Provides actionable trading signals.
+    Get complete TimesNet analysis with LLM interpretation.
     """
     try:
         service = get_timesnet_service()
@@ -361,16 +442,13 @@ async def full_analysis(request: PredictionRequest):
             )
 
         current_price = df["price"].iloc[-1]
-
-        # Get full analysis from TimesNet
         analysis = service.get_full_analysis(df, request.token_symbol, current_price)
 
-        # Get LLM interpretation if requested
         llm_analysis = None
         if request.include_llm_analysis:
             llm_analysis = await get_llm_analysis(
                 request.token_symbol,
-                analysis["forecast"],
+                analysis["prediction"],
                 analysis["anomaly_detection"],
                 analysis["combined_signal"],
             )
@@ -378,11 +456,10 @@ async def full_analysis(request: PredictionRequest):
         return FullAnalysisResponse(
             token_address=request.token_address,
             token_symbol=request.token_symbol,
-            forecast=analysis["forecast"],
+            prediction=PredictionOutput(**analysis["prediction"]),
             anomaly_detection=analysis["anomaly_detection"],
             combined_signal=analysis["combined_signal"],
             llm_analysis=llm_analysis,
-            model_version=service.version,
             timestamp=analysis["timestamp"],
         )
 
@@ -402,12 +479,12 @@ async def root():
         "status": "ready" if service.is_ready else "initializing",
         "endpoints": {
             "health": "/health - Check service health",
-            "forecast": "/forecast - Price prediction (POST)",
+            "forecast": "/forecast - Risk-oriented prediction output (POST)",
             "anomaly": "/anomaly - Anomaly detection (POST)",
             "analyze": "/analyze - Full analysis with LLM (POST)",
         },
         "features": [
-            "Short-term price forecasting (up to 12 hours)",
+            "Risk-oriented prediction outputs",
             "Anomaly detection for unusual trading patterns",
             "Combined trading signals",
             "LLM-powered analysis interpretation",
@@ -445,24 +522,17 @@ class SimpleQueryResponse(BaseModel):
 @app.post("/query", response_model=SimpleQueryResponse)
 async def simple_query(request: SimpleQueryRequest):
     """
-    Simplified query endpoint for chatbot integration
-
-    Accepts minimal data (just price history) and returns
-    a concise summary suitable for chat responses.
+    Simplified query endpoint for chatbot integration.
     """
     try:
         service = get_timesnet_service()
 
-        # Build minimal DataFrame
         df = pd.DataFrame({"price": request.price_history})
         if request.volume_history:
             df["volume"] = request.volume_history
 
-        # Add derived features
         df["OT"] = df["price"].shift(-1).fillna(df["price"].iloc[-1])
-        df["price_change_1h"] = (
-            df["price"].pct_change(4).fillna(0)
-        )  # ~1h with 15min data
+        df["price_change_1h"] = df["price"].pct_change(4).fillna(0)
         df["momentum_1h"] = df["price"].diff(4).fillna(0)
 
         if len(df) < 20:
@@ -470,14 +540,19 @@ async def simple_query(request: SimpleQueryRequest):
 
         current_price = df["price"].iloc[-1]
 
-        # Get analysis based on query type
         if request.query_type == "forecast":
             result = service.forecaster.predict(df, current_price)
-            summary = f"{request.token_symbol}: Predicted {result.direction} {abs(result.predicted_change_pct):.2f}% over next {result.forecast_horizon * 0.25:.1f}h"
-            signal = result.direction
-            confidence = result.confidence
+            prediction = build_prediction_output(
+                result.predicted_prices[:16], current_price, service.version
+            )
+            summary = (
+                f"{request.token_symbol}: 4h return {prediction['expectedReturn4h']:+.2f}% "
+                f"with copy risk {prediction['copyRiskScore']:.2f}"
+            )
+            signal = prediction_signal(prediction)
+            confidence = prediction["confidence"]
             details = {
-                "predicted_change_pct": result.predicted_change_pct,
+                "prediction": prediction,
                 "forecast_horizon_hours": result.forecast_horizon * 0.25,
             }
 
@@ -491,15 +566,14 @@ async def simple_query(request: SimpleQueryRequest):
                 "recent_anomalies": sum(result.is_anomaly[-12:]),
             }
 
-        else:  # full analysis
+        else:
             analysis = service.get_full_analysis(
                 df, request.token_symbol, current_price
             )
 
-            # Get LLM summary
             llm_summary = await get_llm_analysis(
                 request.token_symbol,
-                analysis["forecast"],
+                analysis["prediction"],
                 analysis["anomaly_detection"],
                 analysis["combined_signal"],
             )
@@ -508,7 +582,7 @@ async def simple_query(request: SimpleQueryRequest):
             signal = analysis["combined_signal"]["signal"]
             confidence = analysis["combined_signal"]["strength"]
             details = {
-                "forecast": analysis["forecast"],
+                "prediction": analysis["prediction"],
                 "anomaly": analysis["anomaly_detection"],
                 "action": analysis["combined_signal"]["action"],
             }
