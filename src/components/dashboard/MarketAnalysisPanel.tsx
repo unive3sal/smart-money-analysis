@@ -70,8 +70,8 @@ export function MarketAnalysisPanel() {
   const selectedMarket = markets.find((market) => market.marketId === selectedMarketId) || markets[0];
 
   return (
-    <Card>
-      <CardHeader>
+    <Card className="rounded-[28px] border-white/10 bg-white/[0.035] shadow-[0_20px_60px_rgba(0,0,0,0.2)]">
+      <CardHeader className="border-b border-white/10 pb-5">
         <CardTitle className="flex items-center gap-2">
           <BrainCircuit className="h-5 w-5 text-primary" />
           Market intelligence & AI analysis
@@ -91,7 +91,7 @@ export function MarketAnalysisPanel() {
                 void loadAnalysis(value);
               }}
             >
-              <SelectTrigger>
+              <SelectTrigger className="border-white/10 bg-background/70">
                 <SelectValue placeholder="Select market" />
               </SelectTrigger>
               <SelectContent>
@@ -103,7 +103,7 @@ export function MarketAnalysisPanel() {
               </SelectContent>
             </Select>
           </div>
-          <Button variant="outline" onClick={() => selectedMarketId && loadAnalysis(selectedMarketId)} disabled={loadingAnalysis || !selectedMarketId}>
+              <Button variant="outline" className="border-white/10" onClick={() => selectedMarketId && loadAnalysis(selectedMarketId)} disabled={loadingAnalysis || !selectedMarketId}>
             {loadingAnalysis ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
             Refresh analysis
           </Button>
@@ -117,25 +117,25 @@ export function MarketAnalysisPanel() {
         ) : selectedMarket ? (
           <>
             <div className="grid gap-3 md:grid-cols-4">
-              <div className="rounded-lg border p-4">
+              <div className="rounded-2xl border border-white/10 bg-background/80 p-4">
                 <div className="text-xs text-muted-foreground">Last price</div>
                 <div className="mt-1 text-xl font-semibold">{(selectedMarket.lastPrice * 100).toFixed(1)}¢</div>
               </div>
-              <div className="rounded-lg border p-4">
+              <div className="rounded-2xl border border-white/10 bg-background/80 p-4">
                 <div className="text-xs text-muted-foreground">24h change</div>
                 <div className="mt-1 text-xl font-semibold">{formatPercent(selectedMarket.priceChange24h * 100)}</div>
               </div>
-              <div className="rounded-lg border p-4">
+              <div className="rounded-2xl border border-white/10 bg-background/80 p-4">
                 <div className="text-xs text-muted-foreground">Volume</div>
                 <div className="mt-1 text-xl font-semibold">{formatCurrency(selectedMarket.volume24h)}</div>
               </div>
-              <div className="rounded-lg border p-4">
+              <div className="rounded-2xl border border-white/10 bg-background/80 p-4">
                 <div className="text-xs text-muted-foreground">Liquidity</div>
                 <div className="mt-1 text-xl font-semibold">{formatCurrency(selectedMarket.liquidity)}</div>
               </div>
             </div>
 
-            <div className="rounded-xl border p-5 bg-muted/20 space-y-4">
+            <div className="space-y-4 rounded-[24px] border border-white/10 bg-white/[0.03] p-5">
               <div className="flex flex-wrap items-center gap-2">
                 {(selectedMarket.tags || []).map((tag) => (
                   <Badge key={tag} variant="secondary">{tag}</Badge>
@@ -151,7 +151,7 @@ export function MarketAnalysisPanel() {
                   </div>
                   <div className="font-medium">{analysis.summary}</div>
                   <div className="text-sm text-muted-foreground">{analysis.recommendedAction}</div>
-                  <div className="rounded-lg border bg-background p-3">
+                  <div className="rounded-2xl border border-white/10 bg-background/80 p-3">
                     <div className="text-xs text-muted-foreground mb-2">Synthetic market history used for TimesNet</div>
                     <div className="grid grid-cols-12 gap-1">
                       {analysis.priceHistory.slice(-24).map((point, index) => (

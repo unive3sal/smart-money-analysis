@@ -66,8 +66,8 @@ export function TraderActivityPanel() {
   }
 
   return (
-    <Card>
-      <CardHeader>
+    <Card className="rounded-[28px] border-white/10 bg-white/[0.035] shadow-[0_20px_60px_rgba(0,0,0,0.2)]">
+      <CardHeader className="border-b border-white/10 pb-5">
         <CardTitle className="flex items-center gap-2">
           <Trophy className="h-5 w-5 text-primary" />
           Top traders & live activity
@@ -89,7 +89,7 @@ export function TraderActivityPanel() {
                 key={trader.address}
                 type="button"
                 onClick={() => selectTrader(trader.address)}
-                className={`w-full rounded-xl border p-4 text-left transition ${selectedAddress === trader.address ? "border-primary bg-primary/5" : "bg-muted/20 hover:bg-muted/40"}`}
+                className={`w-full rounded-[24px] border p-4 text-left transition ${selectedAddress === trader.address ? "border-primary bg-primary/8 shadow-[0_0_24px_rgba(59,130,246,0.15)]" : "border-white/10 bg-white/[0.03] hover:bg-white/[0.06]"}`}
               >
                 <div className="flex items-start justify-between gap-4">
                   <div>
@@ -124,7 +124,7 @@ export function TraderActivityPanel() {
           )}
         </div>
 
-        <div className="space-y-3 rounded-xl border p-4 bg-muted/20">
+        <div className="space-y-3 rounded-[24px] border border-white/10 bg-white/[0.03] p-4">
           <div className="flex items-center gap-2 font-semibold">
             <Activity className="h-4 w-4 text-primary" />
             Real-time activity feed
@@ -134,7 +134,7 @@ export function TraderActivityPanel() {
           </div>
           <div className="space-y-3">
             {activity.map((event) => (
-              <div key={event.id} className="rounded-lg border bg-background p-3">
+              <div key={event.id} className="rounded-2xl border border-white/10 bg-background/80 p-3">
                 <div className="flex items-center justify-between gap-3">
                   <Badge variant={event.side === "BUY" ? "default" : "secondary"}>{event.side}</Badge>
                   <span className="text-xs text-muted-foreground">{new Date(event.timestamp).toLocaleString()}</span>

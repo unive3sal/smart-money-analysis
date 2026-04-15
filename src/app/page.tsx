@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { Activity, Bot, BrainCircuit, Trophy, Wallet } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Bot, BrainCircuit, Trophy, Wallet, Waves } from "lucide-react";
 import { ChatInterface } from "@/components/ChatInterface";
 import { WalletPanel } from "@/components/wallet/WalletPanel";
 import { CopyTradeTasksPanel } from "@/components/dashboard/CopyTradeTasksPanel";
@@ -41,6 +41,33 @@ interface ProviderOption {
   address: string;
   mode: "demo" | "browser";
 }
+
+const focusMetrics = [
+  {
+    label: "Wallet authority",
+    value: "Session ready",
+    description: "Authorized wallets and vault ownership remain visible in the sidebar.",
+    icon: Wallet,
+  },
+  {
+    label: "Trader signal",
+    value: "High-conviction",
+    description: "Live leaderboard context stays adjacent to execution workflows.",
+    icon: Trophy,
+  },
+  {
+    label: "Market filter",
+    value: "TimesNet",
+    description: "AI guidance supports task decisions without taking over the workflow.",
+    icon: BrainCircuit,
+  },
+  {
+    label: "Command flow",
+    value: "Chat-first",
+    description: "Natural language control remains anchored in the main focus area.",
+    icon: Bot,
+  },
+];
 
 export default function Home() {
   const [walletState, setWalletState] = useState<WalletState | null>(null);
@@ -128,93 +155,91 @@ export default function Home() {
     }
   }, [loadWallets]);
 
-  const wallets = walletState?.wallets || [];
+  const wallets = useMemo(() => walletState?.wallets || [], [walletState?.wallets]);
+  const commandDeckStats = useMemo(() => [
+    { label: "Connected wallets", value: wallets.length.toString() },
+    { label: "Primary rail", value: wallets[0]?.chain || "Awaiting auth" },
+    { label: "Vault paths", value: String(walletState?.vaults.length || 0) },
+  ], [walletState?.vaults.length, wallets]);
 
   return (
-    <main className="min-h-screen bg-background">
-      <header className="border-b">
-        <div className="container mx-auto px-4 py-4">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-            <div className="flex items-center gap-3">
-              <div className="p-2 rounded-lg bg-primary/10">
-                <Activity className="h-6 w-6 text-primary" />
+    <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-6 px-4 py-6 lg:px-6 xl:px-8">
+      <section className="grid gap-6 xl:grid-cols-[360px_minmax(0,1fr)]">
+        <aside className="space-y-6 xl:sticky xl:top-6 xl:self-start">
+          <div className="rounded-[30px] border border-white/10 bg-white/[0.035] p-5 shadow-[0_24px_80px_rgba(0,0,0,0.24)]">
+            <div className="flex items-center gap-2 text-[0.7rem] font-semibold uppercase tracking-[0.28em] text-primary/80">
+              <Waves className="h-4 w-4" />
+              Sidebar command rail
+            </div>
+            <div className="mt-4 space-y-3">
+              <h2 className="text-xl font-semibold tracking-tight">Prepare capital, verify rails, and frame the trading session.</h2>
+              <p className="text-sm leading-6 text-muted-foreground">
+                The sidebar keeps wallet authority and operating context visible while the center deck stays focused on chat, automation, and analysis.
+              </p>
+            </div>
+            <div className="mt-5 grid gap-3 sm:grid-cols-3 xl:grid-cols-1">
+              {commandDeckStats.map((item) => (
+                <div key={item.label} className="rounded-2xl border border-white/10 bg-background/70 px-4 py-3">
+                  <div className="text-[0.68rem] uppercase tracking-[0.24em] text-muted-foreground">{item.label}</div>
+                  <div className="mt-2 text-sm font-medium">{item.value}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <WalletPanel
+            walletState={walletState}
+            loading={loadingWallets}
+            connectingKey={connectingKey}
+            error={walletError}
+            onRefresh={() => void loadWallets()}
+            onConnect={connectWallet}
+          />
+        </aside>
+
+        <section className="space-y-6">
+          <div className="grid gap-4 md:grid-cols-2 2xl:grid-cols-4">
+            {focusMetrics.map(({ label, value, description, icon: Icon }) => (
+              <div key={label} className="rounded-[28px] border border-white/10 bg-white/[0.035] p-5 shadow-[0_20px_60px_rgba(0,0,0,0.2)]">
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Icon className="h-4 w-4 text-primary" />
+                  {label}
+                </div>
+                <div className="mt-3 text-2xl font-semibold tracking-tight">{value}</div>
+                <div className="mt-2 text-sm leading-6 text-muted-foreground">{description}</div>
               </div>
-              <div>
-                <h1 className="text-xl font-bold">Polymarket Copytrade Control Center</h1>
-                <p className="text-sm text-muted-foreground">
-                  Wallet authorization, trader discovery, automated copytrade tasks, and TimesNet market filtering.
-                </p>
+            ))}
+          </div>
+
+          <div className="grid gap-6 2xl:grid-cols-[minmax(0,1.15fr)_minmax(320px,0.85fr)]">
+            <div className="space-y-6">
+              <div className="rounded-[32px] border border-white/10 bg-white/[0.03] p-3 shadow-[0_28px_90px_rgba(0,0,0,0.28)]">
+                <ChatInterface
+                  className="border-0 bg-transparent shadow-none"
+                  initialPrompt="Show the top Polymarket traders and summarize the highest-conviction market."
+                />
               </div>
+
+              <CopyTradeTasksPanel wallets={wallets} />
             </div>
-            <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
-              <div className="flex items-center gap-2 rounded-full border px-3 py-1.5">
-                <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-                Live trader monitoring
+
+            <div className="space-y-6">
+              <div className="rounded-[30px] border border-white/10 bg-white/[0.035] p-5 shadow-[0_20px_60px_rgba(0,0,0,0.2)]">
+                <div className="text-[0.7rem] font-semibold uppercase tracking-[0.28em] text-primary/80">Focus area</div>
+                <div className="mt-3 space-y-3">
+                  <h2 className="text-xl font-semibold tracking-tight">Execution intelligence stays in the center lane.</h2>
+                  <p className="text-sm leading-6 text-muted-foreground">
+                    Chat drives investigation, tasks capture automation, and market panels stay close enough to validate every move without crowding the primary workflow.
+                  </p>
+                </div>
               </div>
-              <div className="rounded-full border px-3 py-1.5">Polygon + Solana wallets</div>
-              <div className="rounded-full border px-3 py-1.5">TimesNet execution filter</div>
-            </div>
-          </div>
-        </div>
-      </header>
 
-      <div className="container mx-auto px-4 py-6 space-y-6">
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-          <div className="rounded-xl border bg-card p-5">
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <Wallet className="h-4 w-4" />
-              Authorized wallets
+              <TraderActivityPanel />
+              <MarketAnalysisPanel />
             </div>
-            <div className="mt-2 text-3xl font-semibold">{wallets.length}</div>
-            <div className="mt-2 text-sm text-muted-foreground">MetaMask and Phantom session support with vault-ready execution ownership.</div>
           </div>
-          <div className="rounded-xl border bg-card p-5">
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <Trophy className="h-4 w-4" />
-              Trader discovery
-            </div>
-            <div className="mt-2 text-3xl font-semibold">Top ranked</div>
-            <div className="mt-2 text-sm text-muted-foreground">Leaderboard, realtime activity, win rate, and PnL visibility for source traders.</div>
-          </div>
-          <div className="rounded-xl border bg-card p-5">
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <BrainCircuit className="h-4 w-4" />
-              AI market filter
-            </div>
-            <div className="mt-2 text-3xl font-semibold">TimesNet</div>
-            <div className="mt-2 text-sm text-muted-foreground">Market-level AI analysis snapshots used to approve or block mirrored fills.</div>
-          </div>
-          <div className="rounded-xl border bg-card p-5">
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <Bot className="h-4 w-4" />
-              Agent control
-            </div>
-            <div className="mt-2 text-3xl font-semibold">Chat + tools</div>
-            <div className="mt-2 text-sm text-muted-foreground">Inspect traders, tasks, and markets in natural language from the assistant pane.</div>
-          </div>
-        </div>
-
-        <WalletPanel
-          walletState={walletState}
-          loading={loadingWallets}
-          connectingKey={connectingKey}
-          error={walletError}
-          onRefresh={() => void loadWallets()}
-          onConnect={connectWallet}
-        />
-
-        <div className="grid gap-6 xl:grid-cols-[1.45fr_1fr]">
-          <CopyTradeTasksPanel wallets={wallets} />
-          <div className="min-w-0">
-            <ChatInterface initialPrompt="Show the top Polymarket traders and summarize the highest-conviction market." />
-          </div>
-        </div>
-
-        <div className="grid gap-6 xl:grid-cols-[1.15fr_1fr]">
-          <TraderActivityPanel />
-          <MarketAnalysisPanel />
-        </div>
-      </div>
-    </main>
+        </section>
+      </section>
+    </div>
   );
 }

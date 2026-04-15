@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { ModelSelector } from "./ModelSelector";
 import { Send, Bot, User, Loader2, Wrench } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 interface Message {
   role: "user" | "assistant";
@@ -25,9 +26,10 @@ interface StreamEvent {
 
 interface ChatInterfaceProps {
   initialPrompt?: string;
+  className?: string;
 }
 
-export function ChatInterface({ initialPrompt }: ChatInterfaceProps) {
+export function ChatInterface({ initialPrompt, className }: ChatInterfaceProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState(initialPrompt || "");
   const [loading, setLoading] = useState(false);
@@ -193,8 +195,13 @@ export function ChatInterface({ initialPrompt }: ChatInterfaceProps) {
   ];
 
   return (
-    <Card className="flex flex-col h-[600px]">
-      <CardHeader className="flex flex-row items-center justify-between border-b">
+    <Card
+      className={cn(
+        "flex min-h-[520px] flex-col overflow-hidden rounded-[28px] border-white/10 bg-white/[0.035] shadow-[0_22px_80px_rgba(0,0,0,0.25)] lg:min-h-[620px]",
+        className
+      )}
+    >
+      <CardHeader className="flex flex-row items-center justify-between border-b border-white/10 bg-white/[0.03] px-5 py-4">
         <CardTitle className="flex items-center gap-2">
           <Bot className="h-5 w-5" />
           Smart Money Assistant
@@ -202,21 +209,22 @@ export function ChatInterface({ initialPrompt }: ChatInterfaceProps) {
         <ModelSelector value={modelId} onChange={setModelId} />
       </CardHeader>
 
-      <CardContent className="flex-1 overflow-y-auto p-4 space-y-4">
+      <CardContent className="flex-1 space-y-4 overflow-y-auto px-5 py-5">
         {messages.length === 0 && !streamingContent ? (
-          <div className="flex flex-col items-center justify-center h-full text-center">
-            <Bot className="h-12 w-12 text-muted-foreground mb-4" />
-            <h3 className="font-semibold mb-2">Polymarket Copytrade Assistant</h3>
-            <p className="text-sm text-muted-foreground mb-6 max-w-md">
+          <div className="flex h-full flex-col items-center justify-center rounded-[24px] border border-dashed border-white/10 bg-white/[0.02] px-6 py-10 text-center">
+            <Bot className="mb-4 h-12 w-12 text-muted-foreground" />
+            <h3 className="mb-2 text-lg font-semibold">Polymarket Copytrade Assistant</h3>
+            <p className="mb-6 max-w-md text-sm leading-6 text-muted-foreground">
               Ask about top traders, copy trade tasks, Polymarket markets,
               and TimesNet-filtered market analysis.
             </p>
-            <div className="flex flex-wrap gap-2 justify-center">
+            <div className="flex flex-wrap justify-center gap-2">
               {suggestedPrompts.map((prompt) => (
                 <Button
                   key={prompt}
                   variant="outline"
                   size="sm"
+                  className="rounded-full border-white/10 bg-white/[0.03]"
                   onClick={() => setInput(prompt)}
                 >
                   {prompt}
@@ -234,16 +242,16 @@ export function ChatInterface({ initialPrompt }: ChatInterfaceProps) {
                 }`}
               >
                 {message.role === "assistant" && (
-                  <div className="flex-shrink-0 w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
+                  <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-primary/10">
                     <Bot className="h-4 w-4 text-primary" />
                   </div>
                 )}
 
                 <div
-                  className={`max-w-[80%] rounded-lg px-4 py-3 ${
+                  className={`max-w-[88%] rounded-2xl px-4 py-3 shadow-sm ${
                     message.role === "user"
                       ? "bg-primary text-primary-foreground"
-                      : "bg-muted"
+                      : "border border-white/10 bg-white/[0.04]"
                   }`}
                 >
                   <div className="whitespace-pre-wrap text-sm">{message.content}</div>
@@ -261,7 +269,7 @@ export function ChatInterface({ initialPrompt }: ChatInterfaceProps) {
                 </div>
 
                 {message.role === "user" && (
-                  <div className="flex-shrink-0 w-8 h-8 rounded-full bg-primary flex items-center justify-center">
+                  <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-primary shadow-[0_0_20px_rgba(59,130,246,0.4)]">
                     <User className="h-4 w-4 text-primary-foreground" />
                   </div>
                 )}
@@ -270,10 +278,10 @@ export function ChatInterface({ initialPrompt }: ChatInterfaceProps) {
 
             {streamingContent && (
               <div className="flex gap-3 justify-start">
-                <div className="flex-shrink-0 w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
+                <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-primary/10">
                   <Bot className="h-4 w-4 text-primary" />
                 </div>
-                <div className="max-w-[80%] rounded-lg px-4 py-3 bg-muted">
+                <div className="max-w-[88%] rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 shadow-sm">
                   <div className="whitespace-pre-wrap text-sm">{streamingContent}</div>
                   {activeTools.length > 0 && (
                     <div className="flex gap-1 mt-2 flex-wrap">
@@ -293,7 +301,7 @@ export function ChatInterface({ initialPrompt }: ChatInterfaceProps) {
         <div ref={messagesEndRef} />
       </CardContent>
 
-      <div className="border-t p-4">
+      <div className="border-t border-white/10 bg-white/[0.03] p-4">
         <div className="flex gap-2">
           <Input
             value={input}
@@ -301,8 +309,9 @@ export function ChatInterface({ initialPrompt }: ChatInterfaceProps) {
             onKeyDown={handleKeyDown}
             placeholder="Ask about traders, copy trade tasks, or Polymarket AI analysis..."
             disabled={loading}
+            className="border-white/10 bg-background/70"
           />
-          <Button onClick={sendMessage} disabled={loading || !input.trim()}>
+          <Button onClick={sendMessage} disabled={loading || !input.trim()} className="rounded-xl px-4">
             {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
           </Button>
         </div>
