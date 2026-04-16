@@ -17,7 +17,8 @@ Polymarket copytrade control center with browser-wallet authorization, copytrade
 
 - **Frontend**: Next.js 14, React 18, Tailwind CSS
 - **Backend**: Next.js App Router API routes, TypeScript, Zod
-- **Persistence**: Prisma + SQLite for local development
+- **Persistence**: Local JSON file storage in `.data/copytrade-db.json`
+- **Tooling**: Prisma schema/config is present in the repo, but the current app runtime does not use Prisma for persistence
 - **Agent layer**: Custom LLM proxy adapter with tool execution
 - **Trading data**: Polymarket CLOB + Gamma service boundary
 - **Forecasting**: External TimesNet service over HTTP
@@ -35,10 +36,9 @@ Polymarket copytrade control center with browser-wallet authorization, copytrade
 ```bash
 npm install
 cp .env.local.example .env.local
-npm run db:push
 ```
 
-## Environment Variables
+# Environment Variables
 
 Copy `.env.local.example` to `.env.local` and fill in the values you need:
 
@@ -50,7 +50,8 @@ LLM_PROXY_TOKEN=your_proxy_token
 # TimesNet service (external)
 TIMESNET_SERVICE_URL=http://localhost:8000
 
-# Local database (dev)
+# Local JSON storage is used at runtime under .data/copytrade-db.json
+# DATABASE_URL is only relevant if you work with the Prisma schema/tooling
 DATABASE_URL=file:./dev.db
 
 # Polymarket endpoints
@@ -84,6 +85,17 @@ npm run lint
 npm run build
 npm run start
 npm run worker:copytrade
+```
+
+## Source Layout
+
+```text
+src/
+  app/        # Next.js pages, layouts, and API route entrypoints
+  frontend/   # UI components and frontend helpers
+  backend/    # agent, services, server auth/db/worker, observability
+  generated/  # generated code
+  lib/        # remaining shared utilities
 ```
 
 ## Docker
@@ -135,7 +147,8 @@ The main page currently exposes four primary surfaces:
 - The Telegram custody flow in this MVP provisions wallet/vault records and task orchestration in advisory/brokered mode; it does not claim live autonomous execution yet.
 - The UI currently uses seeded/demo wallet targets for local development, even though the signing flow prefers real browser wallet extensions.
 - The copytrade worker seeds leaderboard data, then processes one worker cycle when you run `npm run worker:copytrade`.
+- Runtime persistence currently uses `.data/copytrade-db.json` through `src/backend/server/db/client.ts`; Prisma files in the repo are not the active persistence path.
 - TimesNet is an advisory execution filter, not the sole trading decision-maker.
 - The confidence endpoint is still heuristic and mixes real inputs with placeholder fields.
-- SQLite is suitable for local development; production-style automation should use a more durable database and worker setup.
+- The build may log a Polymarket dynamic server usage warning for `/api/markets` during static generation, but the app still builds successfully.
 - There is currently no dedicated JavaScript test script in `package.json`; use `npm run lint` for the built-in project check.
