@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getMarketAnalysis } from "@/services/analysis/marketAnalysis";
+import { getMarketAnalysis } from "@/backend/services/analysis/marketAnalysis";
 
 export async function GET(
   _request: NextRequest,

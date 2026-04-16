@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { db } from "@/server/db/client";
-import { requireSessionUser } from "@/server/auth/session";
+import { db } from "@/backend/server/db/client";
+import { requireSessionUser } from "@/backend/server/auth/session";
 
 export async function GET() {
   try {

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getTraderActivity } from "@/services/polymarket/traders";
+import { getTraderActivity } from "@/backend/services/polymarket/traders";
 
 export async function GET(
   _request: NextRequest,

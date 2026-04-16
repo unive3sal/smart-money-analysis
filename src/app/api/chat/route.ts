@@ -1,13 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { chat, chatStream, getAvailableModels, StreamEvent } from "@/agent";
-import { ModelId } from "@/agent/providers/openaiProxy";
+import { chat, chatStream, getAvailableModels, StreamEvent } from "@/backend/agent";
+import { ModelId } from "@/backend/agent/providers/openaiProxy";
 import {
   createTraceContext,
   emitMetric,
   logError,
   logInfo,
   startTimer,
-} from "@/lib/observability";
+} from "@/backend/observability";
 
 export const runtime = "nodejs";
 export const maxDuration = 60; // 60 seconds timeout

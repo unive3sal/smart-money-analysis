@@ -1,8 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getMediaSentiment } from "@/services/media/sentiment";
-import { calculateConfidence, generateConfidenceSummary } from "@/services/confidence/calculator";
-import { ConfidenceInput } from "@/services/confidence/types";
-import { getMarketDataClient } from "@/services/marketData";
+import { getTokenConfidenceAnalysis } from "@/backend/services/confidence/analysis";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -19,59 +16,22 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const marketData = getMarketDataClient();
-
-    const [tokenInfo, sentiment] = await Promise.all([
-      marketData.getTokenInfo(tokenSymbol).catch(() => null),
-      getMediaSentiment(tokenSymbol),
-    ]);
-
-    const confidenceInput: ConfidenceInput = {
-      marketActivity: {
-        netFlow24h: 0,
-        uniqueBuyers: 0,
-        uniqueSellers: 0,
-        dominantSide: "hold",
-        avgWinRate: 0,
-        recentPnl: 0,
-      },
-      media: {
-        sentimentScore: sentiment.sentimentScore,
-        mentions24h: sentiment.mentions24h,
-        trendingRank: sentiment.trendingRank,
-      },
-      token: {
-        marketCap: 0,
-        volume24h: tokenInfo?.volume24h || 0,
-        liquidity: 0,
-        ageHours: 168,
-        holderCount: 0,
-      },
-    };
-
-    const confidence = calculateConfidence(confidenceInput);
-    const summary = generateConfidenceSummary(confidence);
+    const analysis = await getTokenConfidenceAnalysis(tokenSymbol);
 
     return NextResponse.json({
       success: true,
       data: {
-        token: {
-          symbol: tokenInfo?.symbol || tokenSymbol,
-          base: tokenInfo?.base,
-          quote: tokenInfo?.quote,
-          price: tokenInfo?.price,
-          exchangeId: tokenInfo?.exchangeId,
-        },
+        token: analysis.token,
         confidence: {
-          score: confidence.score,
-          signal: confidence.signal,
-          reliability: confidence.reliability,
-          components: confidence.components,
-          reasoning: confidence.reasoning,
-          warnings: confidence.warnings,
+          score: analysis.confidence.score,
+          signal: analysis.confidence.signal,
+          reliability: analysis.confidence.reliability,
+          components: analysis.confidence.components,
+          reasoning: analysis.confidence.reasoning,
+          warnings: analysis.confidence.warnings,
         },
-        summary,
-        calculatedAt: confidence.calculatedAt,
+        summary: analysis.summary,
+        calculatedAt: analysis.calculatedAt,
       },
     });
   } catch (error) {

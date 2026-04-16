@@ -2,11 +2,11 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Bot, BrainCircuit, Trophy, Wallet, Waves } from "lucide-react";
-import { ChatInterface } from "@/components/ChatInterface";
-import { WalletPanel } from "@/components/wallet/WalletPanel";
-import { CopyTradeTasksPanel } from "@/components/dashboard/CopyTradeTasksPanel";
-import { TraderActivityPanel } from "@/components/dashboard/TraderActivityPanel";
-import { MarketAnalysisPanel } from "@/components/dashboard/MarketAnalysisPanel";
+import { ChatInterface } from "@/frontend/components/ChatInterface";
+import { WalletPanel } from "@/frontend/components/wallet/WalletPanel";
+import { CopyTradeTasksPanel } from "@/frontend/components/dashboard/CopyTradeTasksPanel";
+import { TraderActivityPanel } from "@/frontend/components/dashboard/TraderActivityPanel";
+import { MarketAnalysisPanel } from "@/frontend/components/dashboard/MarketAnalysisPanel";
 
 interface WalletSummary {
   id: string;

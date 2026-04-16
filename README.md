@@ -9,6 +9,7 @@ Polymarket copytrade control center with browser-wallet authorization, copytrade
 - **Trader discovery** — Browse top traders and inspect recent activity before choosing a source account.
 - **Market analysis** — View Polymarket market snapshots and TimesNet-backed analysis for a selected market.
 - **AI chat assistant** — Use the chat panel or `/api/chat` to inspect markets, traders, wallets, and task state.
+- **Telegram bot channel** — Receive wallet/vault summaries, trader and market inspection, TimesNet/LLM analysis, copy-trade task controls, and AI chat over Telegram.
 - **Background worker cycle** — Run the copytrade worker to seed trader data and process task lifecycle events.
 - **Structured observability** — API and worker paths emit trace-aware logs and metrics.
 
@@ -58,6 +59,11 @@ POLYMARKET_GAMMA_URL=https://gamma-api.polymarket.com
 POLYMARKET_CHAIN_ID=137
 POLYMARKET_PRIVATE_KEY=0x_your_private_key
 POLYMARKET_FUNDER_ADDRESS=0x_your_polymarket_funder
+
+# Telegram bot (optional)
+TELEGRAM_BOT_TOKEN=your_telegram_bot_token
+TELEGRAM_WEBHOOK_SECRET=your_telegram_webhook_secret
+TELEGRAM_API_BASE=https://api.telegram.org
 
 # Local demo controls
 ALLOW_DEMO_WALLET_AUTH=true
@@ -120,10 +126,13 @@ The main page currently exposes four primary surfaces:
 | `/api/traders/[address]/activity` | `GET` | Get recent activity for a trader |
 | `/api/markets` | `GET` | List Polymarket markets |
 | `/api/markets/[marketId]/analysis` | `GET` | Get TimesNet-backed market analysis |
+| `/api/telegram/webhook` | `POST` | Receive Telegram bot updates |
 
 ## Development Notes
 
 - Wallet and copytrade endpoints require a wallet-backed session.
+- Telegram bot updates post to `/api/telegram/webhook`; set `TELEGRAM_WEBHOOK_SECRET` if you want header verification.
+- The Telegram custody flow in this MVP provisions wallet/vault records and task orchestration in advisory/brokered mode; it does not claim live autonomous execution yet.
 - The UI currently uses seeded/demo wallet targets for local development, even though the signing flow prefers real browser wallet extensions.
 - The copytrade worker seeds leaderboard data, then processes one worker cycle when you run `npm run worker:copytrade`.
 - TimesNet is an advisory execution filter, not the sole trading decision-maker.

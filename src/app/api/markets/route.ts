@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { listPolymarketMarkets } from "@/services/polymarket/markets";
+import { listPolymarketMarkets } from "@/backend/services/polymarket/markets";
 
 export async function GET(_request: NextRequest) {
   const markets = await listPolymarketMarkets();

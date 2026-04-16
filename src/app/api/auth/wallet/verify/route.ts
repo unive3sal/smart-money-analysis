@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { WalletChain, WalletProvider } from "@/server/db/client";
-import { createWalletSession } from "@/server/auth/session";
-import { clearWalletAuthNonce, verifyWalletSignature } from "@/server/auth/walletAuth";
+import { WalletChain, WalletProvider } from "@/backend/server/db/client";
+import { createWalletSession } from "@/backend/server/auth/session";
+import { clearWalletAuthNonce, verifyWalletSignature } from "@/backend/server/auth/walletAuth";
 
 const requestSchema = z.object({
   address: z.string().min(4),

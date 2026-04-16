@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { TaskStatus } from "@/server/db/client";
-import { requireSessionUser } from "@/server/auth/session";
-import { updateCopyTradeTaskStatus } from "@/services/copytrade/tasks";
+import { TaskStatus } from "@/backend/server/db/client";
+import { requireSessionUser } from "@/backend/server/auth/session";
+import { updateCopyTradeTaskStatus } from "@/backend/services/copytrade/tasks";
 
 export async function POST(
   _request: NextRequest,

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireSessionUser } from "@/server/auth/session";
-import { deleteCopyTradeTask, getCopyTradeTask } from "@/services/copytrade/tasks";
+import { requireSessionUser } from "@/backend/server/auth/session";
+import { deleteCopyTradeTask, getCopyTradeTask } from "@/backend/services/copytrade/tasks";
 
 export async function GET(
   _request: NextRequest,

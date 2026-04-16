@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { AnalysisSignal, WalletChain } from "@/server/db/client";
-import { requireSessionUser } from "@/server/auth/session";
-import { createCopyTradeTask, listCopyTradeTasks } from "@/services/copytrade/tasks";
+import { AnalysisSignal, WalletChain } from "@/backend/server/db/client";
+import { requireSessionUser } from "@/backend/server/auth/session";
+import { createCopyTradeTask, listCopyTradeTasks } from "@/backend/services/copytrade/tasks";
 
 const createTaskSchema = z.object({
   walletConnectionId: z.string().optional(),
