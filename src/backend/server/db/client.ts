@@ -4,6 +4,7 @@ import { cookies } from "next/headers";
 import {
   AnalysisSignal,
   ExecutionStatus,
+  PolymarketAuthState,
   PositionSide,
   TaskStatus,
   WalletAuthType,
@@ -54,8 +55,27 @@ function ensureDataFile() {
 function normalizeDb(data: CopytradeDatabase): CopytradeDatabase {
   return {
     users: data.users || [],
-    walletConnections: data.walletConnections || [],
-    tradingVaults: data.tradingVaults || [],
+    walletConnections: (data.walletConnections || []).map((wallet) => ({
+      ...wallet,
+      polymarketAuthState: wallet.polymarketAuthState || PolymarketAuthState.UNAUTHORIZED,
+      polymarketApiKeyEncrypted: wallet.polymarketApiKeyEncrypted || null,
+      polymarketApiSecretEncrypted: wallet.polymarketApiSecretEncrypted || null,
+      polymarketApiPassphraseEncrypted: wallet.polymarketApiPassphraseEncrypted || null,
+      polymarketApiCredsLastDerivedAt: wallet.polymarketApiCredsLastDerivedAt || null,
+      polymarketApiCredsExpiresAt: wallet.polymarketApiCredsExpiresAt || null,
+      polymarketReauthMessage: wallet.polymarketReauthMessage || null,
+      polymarketReauthNonce: wallet.polymarketReauthNonce ?? null,
+      polymarketReauthRequestedAt: wallet.polymarketReauthRequestedAt || null,
+    })),
+    tradingVaults: (data.tradingVaults || []).map((vault) => ({
+      ...vault,
+      polymarketAuthState: vault.polymarketAuthState || PolymarketAuthState.UNAUTHORIZED,
+      polymarketApiKeyEncrypted: vault.polymarketApiKeyEncrypted || null,
+      polymarketApiSecretEncrypted: vault.polymarketApiSecretEncrypted || null,
+      polymarketApiPassphraseEncrypted: vault.polymarketApiPassphraseEncrypted || null,
+      polymarketApiCredsLastDerivedAt: vault.polymarketApiCredsLastDerivedAt || null,
+      polymarketApiCredsExpiresAt: vault.polymarketApiCredsExpiresAt || null,
+    })),
     copyTradeTasks: data.copyTradeTasks || [],
     copyTradePositions: data.copyTradePositions || [],
     copyTradeExecutions: data.copyTradeExecutions || [],
@@ -182,6 +202,15 @@ class JsonDatabase {
       authorizationScope: input.authorizationScope || null,
       lastVerifiedAt: nowIso(),
       metadataJson: null,
+      polymarketAuthState: PolymarketAuthState.UNAUTHORIZED,
+      polymarketApiKeyEncrypted: null,
+      polymarketApiSecretEncrypted: null,
+      polymarketApiPassphraseEncrypted: null,
+      polymarketApiCredsLastDerivedAt: null,
+      polymarketApiCredsExpiresAt: null,
+      polymarketReauthMessage: null,
+      polymarketReauthNonce: null,
+      polymarketReauthRequestedAt: null,
       createdAt: nowIso(),
       updatedAt: nowIso(),
     };
@@ -197,6 +226,10 @@ class JsonDatabase {
     Object.assign(record, updates, { updatedAt: nowIso() });
     this.save(data);
     return record;
+  }
+
+  async findWalletConnectionById(id: string) {
+    return this.load().walletConnections.find((wallet) => wallet.id === id) || null;
   }
 
   async findWalletConnectionByComposite(address: string, chain: WalletChain, provider: WalletProvider) {
@@ -215,10 +248,23 @@ class JsonDatabase {
     return this.load().tradingVaults.find((vault) => vault.id === id) || null;
   }
 
+  async findTradingVaultByWalletConnectionId(walletConnectionId: string) {
+    return this.load().tradingVaults.find((vault) => vault.walletConnectionId === walletConnectionId) || null;
+  }
+
   async findTradingVaultByAddress(userId: string, address: string, chain: WalletChain) {
     return this.load().tradingVaults.find(
       (vault) => vault.userId === userId && vault.address === address && vault.chain === chain
     ) || null;
+  }
+
+  async updateTradingVault(id: string, updates: Partial<TradingVaultRecord>) {
+    const data = this.load();
+    const record = data.tradingVaults.find((vault) => vault.id === id);
+    if (!record) throw new Error("Trading vault not found");
+    Object.assign(record, updates, { updatedAt: nowIso() });
+    this.save(data);
+    return record;
   }
 
   async createTradingVault(input: {
@@ -244,6 +290,12 @@ class JsonDatabase {
       authType: input.authType,
       status: input.status ?? "authorized",
       metadataJson: input.metadataJson ?? null,
+      polymarketAuthState: PolymarketAuthState.UNAUTHORIZED,
+      polymarketApiKeyEncrypted: null,
+      polymarketApiSecretEncrypted: null,
+      polymarketApiPassphraseEncrypted: null,
+      polymarketApiCredsLastDerivedAt: null,
+      polymarketApiCredsExpiresAt: null,
       createdAt: nowIso(),
       updatedAt: nowIso(),
     };
@@ -338,6 +390,62 @@ class JsonDatabase {
     return execution;
   }
 
+  async findCopyTradeExecutionById(executionId: string) {
+    return this.load().copyTradeExecutions.find((execution) => execution.id === executionId) || null;
+  }
+
+  async findCopyTradeExecutionByTaskAndActivity(taskId: string, traderActivityEventId: string) {
+    return this.load().copyTradeExecutions.find(
+      (execution) => execution.taskId === taskId && execution.traderActivityEventId === traderActivityEventId
+    ) || null;
+  }
+
+  async updateCopyTradeExecution(executionId: string, updates: Partial<CopyTradeExecutionRecord>) {
+    const data = this.load();
+    const execution = data.copyTradeExecutions.find((item) => item.id === executionId);
+    if (!execution) throw new Error("Copy trade execution not found");
+    Object.assign(execution, updates, { updatedAt: nowIso() });
+    this.save(data);
+    return execution;
+  }
+
+  async listCopyTradeExecutionsForTask(taskId: string, status?: ExecutionStatus) {
+    return this.load().copyTradeExecutions
+      .filter((execution) => execution.taskId === taskId && (!status || execution.status === status))
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  }
+
+  async listCopyTradeExecutionsForUser(userId: string, status?: ExecutionStatus) {
+    const data = this.load();
+    const taskIds = new Set(data.copyTradeTasks.filter((task) => task.userId === userId).map((task) => task.id));
+
+    return data.copyTradeExecutions
+      .filter((execution) => taskIds.has(execution.taskId) && (!status || execution.status === status))
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  }
+
+  async cancelPendingExecutionsForTask(taskId: string, reason: string) {
+    const data = this.load();
+    let updated = 0;
+
+    for (const execution of data.copyTradeExecutions) {
+      if (execution.taskId !== taskId || execution.status !== ExecutionStatus.PENDING) {
+        continue;
+      }
+
+      execution.status = ExecutionStatus.CANCELLED;
+      execution.rejectionReason = reason;
+      execution.updatedAt = nowIso();
+      updated += 1;
+    }
+
+    if (updated > 0) {
+      this.save(data);
+    }
+
+    return updated;
+  }
+
   async listActiveCopyTradeTasks(): Promise<TaskWithRelations[]> {
     const data = this.load();
     return data.copyTradeTasks
@@ -346,8 +454,20 @@ class JsonDatabase {
   }
 
   async listLeaderboardSnapshots(limit: number): Promise<LeaderboardSnapshotRecord[]> {
-    return this.load().leaderboardSnapshots
-      .sort((a, b) => a.rank - b.rank || b.capturedAt.localeCompare(a.capturedAt))
+    const snapshots = this.load().leaderboardSnapshots;
+
+    if (snapshots.length === 0) {
+      return [];
+    }
+
+    const latestCapturedAt = snapshots.reduce(
+      (latest, snapshot) => snapshot.capturedAt.localeCompare(latest) > 0 ? snapshot.capturedAt : latest,
+      snapshots[0].capturedAt
+    );
+
+    return snapshots
+      .filter((snapshot) => snapshot.capturedAt === latestCapturedAt)
+      .sort((a, b) => a.rank - b.rank)
       .slice(0, limit);
   }
 
@@ -357,14 +477,42 @@ class JsonDatabase {
 
   async createLeaderboardSnapshots(records: Array<Omit<LeaderboardSnapshotRecord, "id" | "capturedAt">>) {
     const data = this.load();
+    const capturedAt = nowIso();
     data.leaderboardSnapshots.push(
       ...records.map((record) => ({
         ...record,
         id: cuid("leaderboard"),
-        capturedAt: nowIso(),
+        capturedAt,
       }))
     );
     this.save(data);
+  }
+
+  async replaceLeaderboardSnapshots(records: Array<Omit<LeaderboardSnapshotRecord, "id" | "capturedAt">>) {
+    const data = this.load();
+    const capturedAt = nowIso();
+    data.leaderboardSnapshots = records.map((record) => ({
+      ...record,
+      id: cuid("leaderboard"),
+      capturedAt,
+    }));
+    this.save(data);
+  }
+
+  async countCopyTradeTasksByTraderAddresses(addresses: string[]) {
+    const wanted = new Set(addresses.map((address) => address.toLowerCase()));
+    const counts: Record<string, number> = {};
+
+    for (const task of this.load().copyTradeTasks) {
+      const traderAddress = task.traderAddress.toLowerCase();
+      if (!wanted.has(traderAddress)) {
+        continue;
+      }
+
+      counts[traderAddress] = (counts[traderAddress] || 0) + 1;
+    }
+
+    return counts;
   }
 
   async findMarketAnalysisSnapshot(marketId: string, tokenId: string): Promise<MarketAnalysisSnapshotRecord | null> {
@@ -556,6 +704,7 @@ export const db = new JsonDatabase();
 export {
   AnalysisSignal,
   ExecutionStatus,
+  PolymarketAuthState,
   PositionSide,
   TaskStatus,
   WalletAuthType,

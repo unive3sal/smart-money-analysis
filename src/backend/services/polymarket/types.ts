@@ -1,3 +1,15 @@
+export interface WalletPolymarketAuthStatus {
+  state: "unauthorized" | "authorized" | "requires_reauth";
+  walletAddress: string;
+  chain: string;
+  provider: string;
+  hasCachedCredentials: boolean;
+  credentialsExpireAt: string | null;
+  lastDerivedAt: string | null;
+  reauthMessage: string | null;
+  requestedAt: string | null;
+}
+
 export interface PolymarketMarket {
   marketId: string;
   tokenId: string;
@@ -61,6 +73,40 @@ export interface PolymarketMarketAnalysis {
   analysisDetails?: Record<string, unknown>;
 }
 
+export interface BrokeredExecutionPreparePayload {
+  executionId: string;
+  taskId: string;
+  marketId: string;
+  tokenId: string;
+  side: "BUY" | "SELL";
+  price: number;
+  size: number;
+  orderType: string;
+  walletAddress: string;
+  funderAddress: string | null;
+  expiresAt: string | null;
+  metadata: Record<string, unknown>;
+}
+
+export interface BrokeredExecutionView {
+  id: string;
+  taskId: string;
+  status: string;
+  marketId: string;
+  tokenId: string;
+  side: "BUY" | "SELL";
+  orderType: string;
+  price: number;
+  size: number;
+  executedPrice: number | null;
+  transactionHash: string | null;
+  rejectionReason: string | null;
+  createdAt: string;
+  updatedAt: string;
+  metadata: Record<string, unknown> | null;
+  preparePayload: BrokeredExecutionPreparePayload | null;
+}
+
 export interface CopyTradeTaskView {
   id: string;
   name: string;
@@ -79,5 +125,7 @@ export interface CopyTradeTaskView {
   totalPositions: number;
   openPositions: number;
   lastAutoStopReason: string | null;
+  executionAuthorizationReason?: string | null;
+  executionWalletState?: WalletPolymarketAuthStatus["state"] | null;
   updatedAt: string;
 }

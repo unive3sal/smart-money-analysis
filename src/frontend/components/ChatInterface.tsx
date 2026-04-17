@@ -180,6 +180,11 @@ export function ChatInterface({ initialPrompt, className }: ChatInterfaceProps) 
     }
   };
 
+  const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    void sendMessage();
+  };
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -218,6 +223,7 @@ export function ChatInterface({ initialPrompt, className }: ChatInterfaceProps) 
               Ask about top traders, copy trade tasks, Polymarket markets,
               and TimesNet-filtered market analysis.
             </p>
+            <div className="mb-3 text-xs font-semibold uppercase tracking-[0.24em] text-primary/80">Operator quick prompts</div>
             <div className="flex flex-wrap justify-center gap-2">
               {suggestedPrompts.map((prompt) => (
                 <Button
@@ -302,19 +308,20 @@ export function ChatInterface({ initialPrompt, className }: ChatInterfaceProps) 
       </CardContent>
 
       <div className="border-t border-white/10 bg-white/[0.03] p-4">
-        <div className="flex gap-2">
+        <form className="flex gap-2" onSubmit={handleSubmit}>
           <Input
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder="Ask about traders, copy trade tasks, or Polymarket AI analysis..."
+            aria-label="Assistant message"
             disabled={loading}
             className="border-white/10 bg-background/70"
           />
-          <Button onClick={sendMessage} disabled={loading || !input.trim()} className="rounded-xl px-4">
+          <Button type="submit" disabled={loading || !input.trim()} className="rounded-xl px-4">
             {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
           </Button>
-        </div>
+        </form>
       </div>
     </Card>
   );

@@ -1,7 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Loader2, Play, Pause, Square, Trash2 } from "lucide-react";
+import { Loader2, Play, Pause, Square, Trash2, ShieldAlert } from "lucide-react";
+import { buildBrowserBrokeredOrder } from "@/frontend/lib/polymarketExecution";
+import { getBrowserEvmWalletClient } from "@/frontend/lib/evmWallet";
 import { Button } from "@/frontend/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/frontend/components/ui/card";
 import { Input } from "@/frontend/components/ui/input";
@@ -27,6 +29,8 @@ interface TaskItem {
   totalPositions: number;
   openPositions: number;
   lastAutoStopReason: string | null;
+  executionAuthorizationReason?: string | null;
+  executionWalletState?: "unauthorized" | "authorized" | "requires_reauth" | null;
   updatedAt: string;
   executions?: Array<{
     id: string;
@@ -38,54 +42,120 @@ interface TaskItem {
     transactionHash: string | null;
     createdAt: string;
   }>;
+  pendingExecutions?: Array<{
+    id: string;
+    taskId: string;
+    status: string;
+    marketId: string;
+    tokenId: string;
+    side: "BUY" | "SELL";
+    orderType: string;
+    price: number;
+    size: number;
+    executedPrice: number | null;
+    transactionHash: string | null;
+    rejectionReason: string | null;
+    createdAt: string;
+    updatedAt: string;
+    metadata: Record<string, unknown> | null;
+    preparePayload: {
+      executionId: string;
+      taskId: string;
+      marketId: string;
+      tokenId: string;
+      side: "BUY" | "SELL";
+      price: number;
+      size: number;
+      orderType: string;
+      walletAddress: string;
+      funderAddress: string | null;
+      expiresAt: string | null;
+      metadata: Record<string, unknown>;
+    } | null;
+  }>;
 }
 
 interface WalletOption {
   id: string;
   address: string;
-  provider: string;
+  provider: "METAMASK" | "PHANTOM" | string;
   chain: string;
+  polymarketAuth?: {
+    state: "unauthorized" | "authorized" | "requires_reauth";
+    credentialsExpireAt?: string | null;
+  } | null;
+}
+
+interface TraderOption {
+  address: string;
+  displayName: string;
 }
 
 interface Props {
   wallets: WalletOption[];
 }
 
-const seededTraders = [
-  { label: "Election Whale", address: "0x8f3Cf7ad23Cd3CaDbD9735AFf958023239c6A063" },
-  { label: "Macro Oracle", address: "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174" },
-  { label: "News Catalyst", address: "0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E" },
-];
-
 export function CopyTradeTasksPanel({ wallets }: Props) {
   const [tasks, setTasks] = useState<TaskItem[]>([]);
+  const [traders, setTraders] = useState<TraderOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [selectedWalletId, setSelectedWalletId] = useState("");
-  const [selectedTrader, setSelectedTrader] = useState(seededTraders[0].address);
+  const [selectedTrader, setSelectedTrader] = useState("");
   const [allocationUsd, setAllocationUsd] = useState("250");
   const [takeProfitPercent, setTakeProfitPercent] = useState("12");
   const [stopLossPercent, setStopLossPercent] = useState("8");
   const [error, setError] = useState<string | null>(null);
   const [selectedTask, setSelectedTask] = useState<TaskItem | null>(null);
+  const [confirmDeleteTaskId, setConfirmDeleteTaskId] = useState<string | null>(null);
 
   const selectedWallet = useMemo(
     () => wallets.find((wallet) => wallet.id === selectedWalletId) || wallets[0],
     [wallets, selectedWalletId]
   );
+  const readyWalletCount = useMemo(
+    () => wallets.filter((wallet) => wallet.polymarketAuth?.state === "authorized").length,
+    [wallets]
+  );
+  const pendingExecutionCount = useMemo(
+    () => tasks.reduce((sum, task) => sum + (task.pendingExecutions?.length || 0), 0),
+    [tasks]
+  );
+  const blockedTaskCount = useMemo(
+    () => tasks.filter((task) => task.executionAuthorizationReason).length,
+    [tasks]
+  );
 
   async function loadTasks() {
     try {
       setLoading(true);
-      const response = await fetch("/api/copytrade/tasks", { cache: "no-store" });
-      const payload = await response.json();
+      const [tasksResponse, tradersResponse] = await Promise.all([
+        fetch("/api/copytrade/tasks", { cache: "no-store" }),
+        fetch("/api/traders?limit=25", { cache: "no-store" }),
+      ]);
+      const [tasksPayload, tradersPayload] = await Promise.all([
+        tasksResponse.json(),
+        tradersResponse.json(),
+      ]);
 
-      if (!response.ok) {
+      if (!tasksResponse.ok) {
         setTasks([]);
-        return;
+      } else {
+        setTasks(tasksPayload.data);
       }
 
-      setTasks(payload.data);
+      if (tradersResponse.ok) {
+        const loadedTraders = ((tradersPayload.data || []) as TraderOption[])
+          .map((trader) => ({
+            address: trader.address,
+            displayName: trader.displayName,
+          }));
+        setTraders(loadedTraders);
+        setSelectedTrader((current) => current || loadedTraders[0]?.address || "");
+      } else {
+        setTraders([]);
+        setSelectedTrader("");
+      }
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Failed to load tasks");
     } finally {
@@ -109,17 +179,27 @@ export function CopyTradeTasksPanel({ wallets }: Props) {
       return;
     }
 
+    if (selectedWallet.chain !== "EVM") {
+      setError("Polymarket copy trading currently requires an EVM wallet.");
+      return;
+    }
+
+    if (selectedWallet.polymarketAuth?.state !== "authorized") {
+      setError("Authorize Polymarket execution for the selected wallet before creating a task.");
+      return;
+    }
+
     try {
       setSubmitting(true);
       setError(null);
-      const trader = seededTraders.find((item) => item.address === selectedTrader);
+      const trader = traders.find((item) => item.address === selectedTrader);
       const response = await fetch("/api/copytrade/tasks", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           walletConnectionId: selectedWallet.id,
           traderAddress: selectedTrader,
-          name: `${trader?.label || "Trader"} mirror`,
+          name: `${trader?.displayName || "Trader"} mirror`,
           allocationUsd: Number(allocationUsd),
           takeProfitPercent: Number(takeProfitPercent),
           stopLossPercent: Number(stopLossPercent),
@@ -168,6 +248,87 @@ export function CopyTradeTasksPanel({ wallets }: Props) {
     await loadTasks();
   }
 
+  async function cancelExecution(executionId: string) {
+    try {
+      setError(null);
+      const response = await fetch(`/api/copytrade/executions/${executionId}/cancel`, { method: "POST" });
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(payload.error || "Failed to cancel execution");
+      }
+      await loadTasks();
+      if (selectedTask?.id) {
+        await inspectTask(selectedTask.id);
+      }
+    } catch (cancelError) {
+      setError(cancelError instanceof Error ? cancelError.message : "Failed to cancel execution");
+    }
+  }
+
+  async function submitExecution(executionId: string) {
+    try {
+      setError(null);
+      const prepareResponse = await fetch(`/api/copytrade/executions/${executionId}/prepare`, { method: "POST" });
+      const preparePayload = await prepareResponse.json();
+      if (!prepareResponse.ok) {
+        throw new Error(preparePayload.error || "Failed to prepare execution");
+      }
+
+      const execution = preparePayload.data.execution;
+      const orderPayload = preparePayload.data.preparePayload;
+      const taskWallet = wallets.find((wallet) => wallet.id === selectedWallet?.id || wallet.address.toLowerCase() === orderPayload.walletAddress.toLowerCase());
+      if (!taskWallet || taskWallet.provider !== "METAMASK" && taskWallet.provider !== "PHANTOM") {
+        throw new Error("A connected EVM browser wallet matching this execution is required.");
+      }
+
+      const credsResponse = await fetch(`/api/wallets/polymarket?walletConnectionId=${encodeURIComponent(taskWallet.id)}`, { cache: "no-store" });
+      const credsPayload = await credsResponse.json();
+      if (!credsResponse.ok) {
+        throw new Error(credsPayload.error || "Failed to load wallet Polymarket authorization state");
+      }
+      if (credsPayload.data.state !== "authorized") {
+        throw new Error("Polymarket execution must be authorized before signing orders.");
+      }
+
+      const walletClient = await getBrowserEvmWalletClient({
+        provider: taskWallet.provider,
+        expectedAddress: orderPayload.walletAddress,
+      });
+
+      const signedOrder = await buildBrowserBrokeredOrder({
+        walletClient,
+        preparePayload: orderPayload,
+        creds: {
+          key: "browser-placeholder",
+          secret: "browser-placeholder",
+          passphrase: "browser-placeholder",
+        },
+      });
+
+      const submitResponse = await fetch(`/api/copytrade/executions/${executionId}/submit`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          signedOrder,
+          orderId: execution.id,
+          venueStatus: "submitted_from_browser",
+          executedPrice: orderPayload.price,
+        }),
+      });
+      const submitPayload = await submitResponse.json();
+      if (!submitResponse.ok) {
+        throw new Error(submitPayload.error || "Failed to submit execution");
+      }
+
+      await loadTasks();
+      if (selectedTask?.id) {
+        await inspectTask(selectedTask.id);
+      }
+    } catch (submitError) {
+      setError(submitError instanceof Error ? submitError.message : "Failed to submit execution");
+    }
+  }
+
   return (
     <Card className="rounded-[30px] border-white/10 bg-white/[0.035] shadow-[0_24px_80px_rgba(0,0,0,0.24)]">
       <CardHeader className="border-b border-white/10 pb-5">
@@ -183,24 +344,24 @@ export function CopyTradeTasksPanel({ wallets }: Props) {
               <div className="text-[0.7rem] font-semibold uppercase tracking-[0.28em] text-primary/80">Task launchpad</div>
               <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2">
                 <div className="space-y-2">
-                  <div className="text-sm font-medium">Source trader</div>
+                  <label htmlFor="copytrade-source-trader" className="text-sm font-medium">Source trader</label>
                   <Select value={selectedTrader} onValueChange={setSelectedTrader}>
-                    <SelectTrigger>
+                    <SelectTrigger id="copytrade-source-trader" aria-label="Source trader">
                       <SelectValue placeholder="Select trader" />
                     </SelectTrigger>
                     <SelectContent>
-                      {seededTraders.map((trader) => (
+                      {traders.map((trader) => (
                         <SelectItem key={trader.address} value={trader.address}>
-                          {trader.label}
+                          {trader.displayName}
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
                 </div>
                 <div className="space-y-2">
-                  <div className="text-sm font-medium">Wallet</div>
+                  <label htmlFor="copytrade-wallet" className="text-sm font-medium">Wallet</label>
                   <Select value={selectedWalletId} onValueChange={setSelectedWalletId}>
-                    <SelectTrigger>
+                    <SelectTrigger id="copytrade-wallet" aria-label="Execution wallet">
                       <SelectValue placeholder="Select wallet" />
                     </SelectTrigger>
                     <SelectContent>
@@ -213,17 +374,39 @@ export function CopyTradeTasksPanel({ wallets }: Props) {
                   </Select>
                 </div>
                 <div className="space-y-2">
-                  <div className="text-sm font-medium">Allocation</div>
-                  <Input value={allocationUsd} onChange={(e) => setAllocationUsd(e.target.value)} />
+                  <label htmlFor="copytrade-allocation" className="text-sm font-medium">Allocation (USD)</label>
+                  <Input
+                    id="copytrade-allocation"
+                    type="number"
+                    inputMode="decimal"
+                    min="1"
+                    step="1"
+                    value={allocationUsd}
+                    onChange={(e) => setAllocationUsd(e.target.value)}
+                  />
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-2">
-                    <div className="text-sm font-medium">TP %</div>
-                    <Input value={takeProfitPercent} onChange={(e) => setTakeProfitPercent(e.target.value)} />
+                    <label htmlFor="copytrade-tp" className="text-sm font-medium">TP %</label>
+                    <Input
+                      id="copytrade-tp"
+                      type="number"
+                      inputMode="decimal"
+                      step="0.1"
+                      value={takeProfitPercent}
+                      onChange={(e) => setTakeProfitPercent(e.target.value)}
+                    />
                   </div>
                   <div className="space-y-2">
-                    <div className="text-sm font-medium">SL %</div>
-                    <Input value={stopLossPercent} onChange={(e) => setStopLossPercent(e.target.value)} />
+                    <label htmlFor="copytrade-sl" className="text-sm font-medium">SL %</label>
+                    <Input
+                      id="copytrade-sl"
+                      type="number"
+                      inputMode="decimal"
+                      step="0.1"
+                      value={stopLossPercent}
+                      onChange={(e) => setStopLossPercent(e.target.value)}
+                    />
                   </div>
                 </div>
               </div>
@@ -235,6 +418,27 @@ export function CopyTradeTasksPanel({ wallets }: Props) {
 
             <div className="rounded-2xl border border-primary/15 bg-primary/5 p-4 text-sm text-muted-foreground">
               Tasks bootstrap from the latest observed trader activity, then the worker advances them only when a new event arrives and passes the TimesNet filter.
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2">
+              <div className="rounded-2xl border border-white/10 bg-background/70 p-4">
+                <div className="flex items-center gap-2 text-xs uppercase tracking-[0.24em] text-muted-foreground">
+                  <ShieldAlert className="h-3.5 w-3.5 text-primary" />
+                  Execution-ready wallets
+                </div>
+                <div className="mt-3 text-2xl font-semibold">{readyWalletCount}</div>
+                <div className="mt-2 text-sm text-muted-foreground">Wallets currently authorized for Polymarket execution signing.</div>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-background/70 p-4">
+                <div className="text-xs uppercase tracking-[0.24em] text-muted-foreground">Pending signatures</div>
+                <div className="mt-3 text-2xl font-semibold">{pendingExecutionCount}</div>
+                <div className="mt-2 text-sm text-muted-foreground">Queued orders requiring browser confirmation before submission.</div>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-background/70 p-4">
+                <div className="text-xs uppercase tracking-[0.24em] text-muted-foreground">Execution blocked</div>
+                <div className="mt-3 text-2xl font-semibold">{blockedTaskCount}</div>
+                <div className="mt-2 text-sm text-muted-foreground">Tasks waiting on wallet or signing readiness before live submission.</div>
+              </div>
             </div>
 
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2">
@@ -290,6 +494,11 @@ export function CopyTradeTasksPanel({ wallets }: Props) {
                       <div className="mt-1 text-sm text-muted-foreground">
                         Following {formatAddress(task.traderAddress, 6)} · Allocation {formatCurrency(task.allocationUsd)} · TimesNet ≥ {(task.timesnetMinimumConfidence * 100).toFixed(0)}%
                       </div>
+                      {task.pendingExecutions?.length ? (
+                        <div className="mt-2">
+                          <Badge variant="outline">{task.pendingExecutions.length} pending execution{task.pendingExecutions.length === 1 ? "" : "s"}</Badge>
+                        </div>
+                      ) : null}
                     </div>
                     <div className="flex flex-wrap gap-2">
                       <Button variant="outline" size="sm" className="border-white/10" onClick={() => inspectTask(task.id)}>
@@ -303,9 +512,21 @@ export function CopyTradeTasksPanel({ wallets }: Props) {
                         <Square className="mr-1 h-3.5 w-3.5" />
                         Stop
                       </Button>
-                      <Button variant="destructive" size="sm" onClick={() => deleteTask(task.id)}>
+                      <Button
+                        variant={confirmDeleteTaskId === task.id ? "destructive" : "outline"}
+                        size="sm"
+                        className={confirmDeleteTaskId === task.id ? "" : "border-white/10"}
+                        onClick={() => {
+                          if (confirmDeleteTaskId === task.id) {
+                            void deleteTask(task.id);
+                            setConfirmDeleteTaskId(null);
+                            return;
+                          }
+                          setConfirmDeleteTaskId(task.id);
+                        }}
+                      >
                         <Trash2 className="mr-1 h-3.5 w-3.5" />
-                        Delete
+                        {confirmDeleteTaskId === task.id ? "Confirm delete" : "Delete"}
                       </Button>
                     </div>
                   </div>
@@ -338,6 +559,16 @@ export function CopyTradeTasksPanel({ wallets }: Props) {
                       Last auto-stop reason: {task.lastAutoStopReason}
                     </div>
                   )}
+                  {task.executionAuthorizationReason ? (
+                    <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-200">
+                      Execution blocked: {task.executionAuthorizationReason.replaceAll("_", " ")}
+                    </div>
+                  ) : null}
+                  {confirmDeleteTaskId === task.id ? (
+                    <div className="rounded-2xl border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive-foreground">
+                      Confirm deletion to remove this task from the automation book.
+                    </div>
+                  ) : null}
                 </div>
               ))
             )}
@@ -370,6 +601,45 @@ export function CopyTradeTasksPanel({ wallets }: Props) {
                     <div className="text-xs text-muted-foreground">TimesNet rule</div>
                     <div className="mt-1 font-semibold">{selectedTask.timesnetRequiredSignal || "buy"} @ {(selectedTask.timesnetMinimumConfidence * 100).toFixed(0)}%</div>
                   </div>
+                </div>
+                {selectedTask.executionAuthorizationReason ? (
+                  <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-200">
+                    Execution blocked because {selectedTask.executionAuthorizationReason.replaceAll("_", " ")}.
+                  </div>
+                ) : null}
+                <div className="space-y-2">
+                  <div className="text-sm font-medium">Queued for signature</div>
+                  {selectedTask.pendingExecutions?.length ? (
+                    <div className="grid gap-2">
+                      {selectedTask.pendingExecutions.map((execution) => (
+                        <div key={execution.id} className="rounded-2xl border border-white/10 bg-background p-3 text-sm">
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <div className="font-medium">{execution.side} · {execution.orderType}</div>
+                              <div className="text-muted-foreground">
+                                {execution.size} shares @ {execution.price.toFixed(3)}
+                              </div>
+                              <div className="mt-1 text-xs text-muted-foreground">
+                                {(execution.metadata?.question as string | undefined) || execution.marketId}
+                              </div>
+                            </div>
+                            <div className="flex gap-2">
+                              <Button size="sm" onClick={() => void submitExecution(execution.id)}>
+                                Sign & execute
+                              </Button>
+                              <Button size="sm" variant="outline" onClick={() => void cancelExecution(execution.id)}>
+                                Cancel
+                              </Button>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="rounded-2xl border border-dashed border-white/10 p-4 text-sm text-muted-foreground">
+                      No pending executions.
+                    </div>
+                  )}
                 </div>
                 <div className="space-y-2">
                   <div className="text-sm font-medium">Recent executions</div>

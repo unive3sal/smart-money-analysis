@@ -5,7 +5,6 @@ import { recoverMessageAddress } from "viem";
 import { WalletChain, WalletProvider } from "@/backend/server/db/client";
 
 const NONCE_COOKIE = "wallet_auth_nonce";
-const DEMO_SIGNATURE_PREFIX = "demo:";
 
 export interface WalletAuthNonce {
   nonce: string;
@@ -38,14 +37,6 @@ export async function verifyWalletSignature(input: {
 
   if (!storedNonce || !input.message.includes(storedNonce)) {
     return false;
-  }
-
-  if (
-    process.env.NODE_ENV !== "production" &&
-    input.signature === `${DEMO_SIGNATURE_PREFIX}${input.address}` &&
-    process.env.ALLOW_DEMO_WALLET_AUTH !== "false"
-  ) {
-    return true;
   }
 
   const normalizedAddress = input.address.trim().toLowerCase();

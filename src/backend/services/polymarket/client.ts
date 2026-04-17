@@ -1,5 +1,5 @@
 import { privateKeyToAccount } from "viem/accounts";
-import { createPublicClient, createWalletClient, http } from "viem";
+import { createPublicClient, createWalletClient, http, type WalletClient } from "viem";
 import { polygon } from "viem/chains";
 import {
   ClobClient,
@@ -11,7 +11,7 @@ import {
   type ClobSigner,
 } from "@polymarket/clob-client";
 import { emitMetric, logError, logInfo, startTimer, type TraceContext } from "@/backend/observability";
-import type { PolymarketMarket, PolymarketTraderActivity } from "@/backend/services/polymarket/types";
+import type { PolymarketMarket, PolymarketTrader, PolymarketTraderActivity } from "@/backend/services/polymarket/types";
 
 const CLOB_BASE_URL = process.env.POLYMARKET_CLOB_URL || "https://clob.polymarket.com";
 const GAMMA_BASE_URL = process.env.POLYMARKET_GAMMA_URL || "https://gamma-api.polymarket.com";
@@ -19,9 +19,39 @@ const POLYMARKET_CHAIN_ID = Number(process.env.POLYMARKET_CHAIN_ID || 137);
 const publicClient = createPublicClient({ chain: polygon, transport: http() });
 const POLYMARKET_CHAIN = POLYMARKET_CHAIN_ID === 80002 ? Chain.AMOY : Chain.POLYGON;
 
+type DelegatedSignerInput = {
+  accountAddress: `0x${string}`;
+  signTypedData: (args: {
+    domain: Record<string, unknown>;
+    types: Record<string, Array<{ name: string; type: string }>>;
+    primaryType?: string;
+    message: Record<string, unknown>;
+  }) => Promise<`0x${string}`>;
+};
+
 function parseNumber(value: unknown, fallback = 0) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function normalizeAddress(value: unknown) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function isValidAddress(value: string) {
+  return /^0x[a-f0-9]{40}$/i.test(value);
+}
+
+function displayNameFromAddress(address: string) {
+  return `${address.slice(0, 6)}...${address.slice(-4)}`;
+}
+
+function scoreLeaderboardEntry(input: {
+  notionalVolume: number;
+  tradeCount: number;
+  marketCount: number;
+}) {
+  return Math.max(0, input.notionalVolume + (input.tradeCount * 20) + (input.marketCount * 12));
 }
 
 export function normalizeGammaMarket(market: Record<string, unknown>, index = 0): PolymarketMarket {
@@ -124,7 +154,91 @@ export class PolymarketService {
     return market;
   }
 
-  async getTraderActivity(address: string, context?: TraceContext): Promise<PolymarketTraderActivity[]> {
+  async getTopTraders(limit = 10, context?: TraceContext): Promise<PolymarketTrader[]> {
+    const client = this.createPublicClient();
+    const seen = new Map<string, {
+      trader: PolymarketTrader;
+      markets: Set<string>;
+      buyTrades: number;
+      sellTrades: number;
+    }>();
+    let cursor: string | undefined;
+
+    for (let page = 0; page < 6 && seen.size < limit * 3; page += 1) {
+      const payload = await client.getSamplingMarkets(cursor);
+      cursor = payload.next_cursor || undefined;
+
+      for (const rawMarket of payload.data as Array<Record<string, unknown>>) {
+        const conditionId = String(rawMarket.condition_id || rawMarket.id || "");
+        if (!conditionId) {
+          continue;
+        }
+
+        const events = await client.getMarketTradesEvents(conditionId);
+
+        for (const event of events) {
+          const address = normalizeAddress(event.user?.address);
+          if (!isValidAddress(address)) {
+            continue;
+          }
+
+          const existing = seen.get(address);
+          const tradeCount = (existing?.trader.totalTrades || 0) + 1;
+          const realizedPnl = (existing?.trader.realizedPnl || 0) + (parseNumber(event.size) * parseNumber(event.price));
+          const markets = existing?.markets || new Set<string>();
+          markets.add(conditionId);
+          const buyTrades = (existing?.buyTrades || 0) + (event.side === "BUY" ? 1 : 0);
+          const sellTrades = (existing?.sellTrades || 0) + (event.side === "SELL" ? 1 : 0);
+          const winRate = tradeCount > 0 ? (buyTrades / tradeCount) * 100 : 0;
+
+          seen.set(address, {
+            trader: {
+              address,
+              displayName: event.user?.username || event.user?.pseudonym || displayNameFromAddress(address),
+              avatarUrl: event.user?.optimized_profile_picture || event.user?.profile_picture || undefined,
+              realizedPnl,
+              unrealizedPnl: 0,
+              winRate,
+              totalTrades: tradeCount,
+              activityScore: scoreLeaderboardEntry({
+                notionalVolume: realizedPnl,
+                tradeCount,
+                marketCount: markets.size,
+              }),
+              copiedByTasks: 0,
+            },
+            markets,
+            buyTrades,
+            sellTrades,
+          });
+        }
+      }
+
+      if (!cursor) {
+        break;
+      }
+    }
+
+    const traders = [...seen.values()]
+      .map((entry) => entry.trader)
+      .sort((a, b) => b.activityScore - a.activityScore || b.realizedPnl - a.realizedPnl)
+      .slice(0, limit);
+
+    if (traders.length === 0) {
+      throw new Error("No trader leaderboard data available from Polymarket sampling markets");
+    }
+
+    logInfo("Polymarket trader leaderboard refreshed", {
+      service: "polymarket",
+      operation: "get_top_traders",
+      outcome: "success",
+      trader_count: traders.length,
+    }, context);
+
+    return traders;
+  }
+
+  async getTraderActivity(address: string, _context?: TraceContext): Promise<PolymarketTraderActivity[]> {
     const client = this.createPublicClient();
     const trades = await client.getTrades({ maker_address: address }, true);
 
@@ -158,22 +272,17 @@ export class PolymarketService {
 
     try {
       const signer = await this.createSigner(input.privateKey);
-      const creds = await new ClobClient(CLOB_BASE_URL, POLYMARKET_CHAIN, signer).createOrDeriveApiKey();
-      const client = new ClobClient(
-        CLOB_BASE_URL,
-        POLYMARKET_CHAIN,
+      const creds = await this.createOrDeriveApiCredentials({
+        signer,
+        signatureType: input.signatureType,
+        funder: input.funder,
+      });
+      const client = this.createAuthenticatedClient({
         signer,
         creds,
-        input.signatureType ?? SignatureType.EOA,
-        input.funder,
-        undefined,
-        false,
-        undefined,
-        undefined,
-        true,
-        undefined,
-        true
-      );
+        signatureType: input.signatureType,
+        funder: input.funder,
+      });
 
       const result = await client.createAndPostOrder(
         {
@@ -216,6 +325,77 @@ export class PolymarketService {
       }, context);
       throw error;
     }
+  }
+
+  async createOrDeriveApiCredentials(input: {
+    signer: ClobSigner;
+    signatureType?: SignatureType;
+    funder?: string;
+  }) {
+    const client = new ClobClient(
+      CLOB_BASE_URL,
+      POLYMARKET_CHAIN,
+      input.signer,
+      undefined,
+      input.signatureType ?? SignatureType.EOA,
+      input.funder
+    );
+
+    return client.createOrDeriveApiKey();
+  }
+
+  createAuthenticatedClient(input: {
+    signer: ClobSigner;
+    creds: ApiKeyCreds;
+    signatureType?: SignatureType;
+    funder?: string;
+  }) {
+    return new ClobClient(
+      CLOB_BASE_URL,
+      POLYMARKET_CHAIN,
+      input.signer,
+      input.creds,
+      input.signatureType ?? SignatureType.EOA,
+      input.funder,
+      undefined,
+      false,
+      undefined,
+      undefined,
+      true,
+      undefined,
+      true
+    );
+  }
+
+  createDelegatedSigner(input: DelegatedSignerInput): ClobSigner {
+    return {
+      account: {
+        address: input.accountAddress,
+        type: "json-rpc",
+      },
+      chain: polygon,
+      transport: http(),
+      signTypedData: async ({
+        domain,
+        types,
+        primaryType,
+        message,
+      }: {
+        domain: Record<string, unknown>;
+        types: Record<string, Array<{ name: string; type: string }>>;
+        primaryType?: string;
+        message: Record<string, unknown>;
+      }) => input.signTypedData({
+        domain: domain as Record<string, unknown>,
+        types: Object.fromEntries(
+          Object.entries(types as Record<string, Array<{ name: string; type: string }>>).filter(
+            ([typeName]) => typeName !== "EIP712Domain"
+          )
+        ),
+        primaryType,
+        message: message as Record<string, unknown>,
+      }),
+    } as unknown as WalletClient;
   }
 
   async getBalance(address: `0x${string}`) {

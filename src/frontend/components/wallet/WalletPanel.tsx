@@ -1,5 +1,6 @@
 "use client";
 
+import bs58 from "bs58";
 import { useMemo } from "react";
 import { Loader2, RefreshCw, Shield, Wallet, PlugZap } from "lucide-react";
 import { Button } from "@/frontend/components/ui/button";
@@ -19,6 +20,17 @@ interface ConnectedWallet {
     provider: string;
     label: string | null;
     lastVerifiedAt: string | null;
+    polymarketAuth: {
+      state: "unauthorized" | "authorized" | "requires_reauth";
+      walletAddress: string;
+      chain: string;
+      provider: string;
+      hasCachedCredentials: boolean;
+      credentialsExpireAt: string | null;
+      lastDerivedAt: string | null;
+      reauthMessage: string | null;
+      requestedAt: string | null;
+    } | null;
   }>;
   vaults: Array<{
     id: string;
@@ -35,7 +47,6 @@ interface ProviderOption {
   description: string;
   provider: "METAMASK" | "PHANTOM";
   chain: "EVM" | "SOLANA";
-  address: string;
   mode: "browser";
 }
 
@@ -43,33 +54,35 @@ const providerOptions: ProviderOption[] = [
   {
     key: "METAMASK_EVM",
     title: "MetaMask",
-    description: "Use the browser wallet on Polygon for Polymarket-compatible EVM auth.",
+    description: "Detect the active MetaMask Polygon-compatible EVM account for Polymarket auth.",
     provider: "METAMASK",
     chain: "EVM",
-    address: "0x8f3Cf7ad23Cd3CaDbD9735AFf958023239c6A063",
     mode: "browser",
   },
   {
     key: "PHANTOM_EVM",
     title: "Phantom (EVM)",
-    description: "Use Phantom in EVM mode for Polygon-compatible auth and vault ownership.",
+    description: "Detect the active Phantom EVM account for Polygon-compatible auth and execution.",
     provider: "PHANTOM",
     chain: "EVM",
-    address: "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174",
     mode: "browser",
   },
   {
     key: "PHANTOM_SOLANA",
     title: "Phantom (Solana)",
-    description: "Use Phantom on Solana for identity and cross-chain vault ownership tracking.",
+    description: "Detect the active Phantom Solana account for identity and cross-chain vault tracking.",
     provider: "PHANTOM",
     chain: "SOLANA",
-    address: "9xQeWvG816bUx9EPfEZjY1w2VY1iK5jBqFaUG2RgxN1R",
     mode: "browser",
   },
 ];
 
-async function signWithBrowserWallet(option: ProviderOption, message: string) {
+type BrowserWalletAuthorization = {
+  address: string;
+  signature: string;
+};
+
+async function signWithBrowserWallet(option: ProviderOption, message: string): Promise<BrowserWalletAuthorization> {
   if (typeof window === "undefined") {
     throw new Error("Browser wallet signing is unavailable outside the browser.");
   }
@@ -98,13 +111,14 @@ async function signWithBrowserWallet(option: ProviderOption, message: string) {
     }
 
     const connection = await provider.connect();
-    if (connection.publicKey.toString() !== option.address) {
-      throw new Error("Connected Phantom Solana wallet does not match the expected address.");
-    }
-
+    const activeAddress = connection.publicKey.toString();
     const encodedMessage = new TextEncoder().encode(message);
-    await provider.signMessage(encodedMessage);
-    return `demo:${option.address}`;
+    const result = await provider.signMessage(encodedMessage);
+
+    return {
+      address: activeAddress,
+      signature: bs58.encode(result.signature),
+    };
   }
 
   const ethereumProvider = option.provider === "PHANTOM"
@@ -122,10 +136,6 @@ async function signWithBrowserWallet(option: ProviderOption, message: string) {
     throw new Error(`${option.title} did not return an account.`);
   }
 
-  if (activeAddress.toLowerCase() !== option.address.toLowerCase()) {
-    throw new Error(`Connected ${option.title} account does not match the configured demo address.`);
-  }
-
   const signature = await ethereumProvider.request({
     method: "personal_sign",
     params: [message, activeAddress],
@@ -135,7 +145,10 @@ async function signWithBrowserWallet(option: ProviderOption, message: string) {
     throw new Error(`${option.title} did not return a valid signature.`);
   }
 
-  return signature;
+  return {
+    address: activeAddress,
+    signature,
+  };
 }
 
 export function WalletPanel({
@@ -145,17 +158,31 @@ export function WalletPanel({
   error,
   onRefresh,
   onConnect,
+  onAuthorizePolymarket,
 }: {
   walletState: ConnectedWallet | null;
   loading: boolean;
   connectingKey: string | null;
   error: string | null;
   onRefresh: () => void;
-  onConnect: (option: ProviderOption, signMessage: (message: string) => Promise<string>) => Promise<void>;
+  onConnect: (option: ProviderOption, authorize: (message: string) => Promise<BrowserWalletAuthorization>) => Promise<void>;
+  onAuthorizePolymarket: (walletId: string) => Promise<void>;
 }) {
   const connectedCount = walletState?.wallets.length || 0;
   const vaultCount = walletState?.vaults.length || 0;
   const primaryWallet = useMemo(() => walletState?.wallets[0], [walletState]);
+
+  function renderPolymarketBadge(state: ConnectedWallet["wallets"][number]["polymarketAuth"]) {
+    if (!state || state.state === "unauthorized") {
+      return <Badge variant="secondary">Polymarket auth needed</Badge>;
+    }
+
+    if (state.state === "requires_reauth") {
+      return <Badge variant="outline">Polymarket reauth required</Badge>;
+    }
+
+    return <Badge className="gap-1"><Shield className="h-3 w-3" /> Polymarket ready</Badge>;
+  }
 
   return (
     <Card className="rounded-[28px] border-white/10 bg-white/[0.035] shadow-[0_20px_60px_rgba(0,0,0,0.2)]">
@@ -190,11 +217,33 @@ export function WalletPanel({
                   {primaryWallet.label || primaryWallet.provider} · {formatAddress(primaryWallet.address)} · {primaryWallet.chain}
                 </div>
               </div>
-              <Badge className="gap-1">
-                <Shield className="h-3 w-3" />
-                Authorized
-              </Badge>
+              {renderPolymarketBadge(primaryWallet.polymarketAuth)}
             </div>
+            {walletState?.wallets?.length ? (
+              <div className="mt-4 grid gap-3 md:grid-cols-2">
+                {walletState.wallets.map((wallet) => (
+                  <div key={wallet.id} className="rounded-2xl border border-white/10 bg-background/80 p-3 text-sm">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="font-medium">{wallet.label || wallet.provider}</div>
+                      {renderPolymarketBadge(wallet.polymarketAuth)}
+                    </div>
+                    <div className="mt-1 text-muted-foreground">{formatAddress(wallet.address, 6)} · {wallet.chain}</div>
+                    {wallet.chain === "EVM" ? (
+                      <Button
+                        className="mt-3 w-full"
+                        size="sm"
+                        variant={wallet.polymarketAuth?.state === "authorized" ? "outline" : "default"}
+                        onClick={() => {
+                          void onAuthorizePolymarket(wallet.id);
+                        }}
+                      >
+                        {wallet.polymarketAuth?.state === "authorized" ? "Refresh Polymarket auth" : "Authorize Polymarket execution"}
+                      </Button>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            ) : null}
             {walletState?.vaults?.length ? (
               <div className="grid gap-2 md:grid-cols-2">
                 {walletState.vaults.map((vault) => (
@@ -223,7 +272,7 @@ export function WalletPanel({
                 <div className="text-sm text-muted-foreground">{option.description}</div>
               </div>
               <div className="text-xs text-muted-foreground">
-                Wallet target: {formatAddress(option.address, 6)}
+                Connect the active browser account for {option.chain === "EVM" ? "Polymarket execution" : "wallet identity"}
               </div>
               <Button
                 className="w-full"
@@ -245,7 +294,7 @@ export function WalletPanel({
         </div>
 
         <div className="rounded-2xl border border-primary/15 bg-primary/5 p-4 text-sm text-muted-foreground">
-          This flow now prefers real browser wallet signing. The local demo signature path is only accepted when a matching browser wallet extension is unavailable or when you explicitly use the seeded local environment.
+          This flow uses real browser wallet signatures for both wallet authorization and Polymarket execution readiness.
         </div>
 
         {error && <div className="text-sm text-destructive">{error}</div>}

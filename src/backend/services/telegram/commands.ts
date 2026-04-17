@@ -216,7 +216,7 @@ export async function handleTelegramCommand(
       return {
         messages: [
           formatTaskSummary(task),
-          `Analyses attached: ${performance.analyses.length}`,
+          `Analyses attached: ${(performance as { analyses?: unknown[] }).analyses?.length || 0}`,
         ],
       };
     }

@@ -3,56 +3,66 @@ import { getFallbackPolymarketMarkets } from "@/backend/services/polymarket/mark
 import { getPolymarketService } from "@/backend/services/polymarket/client";
 import type { PolymarketTrader } from "@/backend/services/polymarket/types";
 
+function toSnapshotTrader(snapshot: {
+  address: string;
+  displayName: string | null;
+  realizedPnl: number;
+  unrealizedPnl: number;
+  winRate: number;
+  totalTrades: number;
+  activityScore: number;
+}, copiedByTasks: number): PolymarketTrader {
+  return {
+    address: snapshot.address,
+    displayName: snapshot.displayName || `${snapshot.address.slice(0, 6)}...${snapshot.address.slice(-4)}`,
+    realizedPnl: snapshot.realizedPnl,
+    unrealizedPnl: snapshot.unrealizedPnl,
+    winRate: snapshot.winRate,
+    totalTrades: snapshot.totalTrades,
+    activityScore: snapshot.activityScore,
+    copiedByTasks,
+  };
+}
+
+async function withCopiedByTaskCounts(traders: PolymarketTrader[]) {
+  const counts = await db.countCopyTradeTasksByTraderAddresses(traders.map((trader) => trader.address));
+
+  return traders.map((trader) => ({
+    ...trader,
+    copiedByTasks: counts[trader.address.toLowerCase()] || 0,
+  }));
+}
+
+export async function refreshLeaderboardSnapshot(limit = 25) {
+  const service = getPolymarketService();
+  const traders = await service.getTopTraders(limit);
+
+  await db.replaceLeaderboardSnapshots(
+    traders.map((trader, index) => ({
+      address: trader.address,
+      displayName: trader.displayName,
+      rank: index + 1,
+      realizedPnl: trader.realizedPnl,
+      unrealizedPnl: trader.unrealizedPnl,
+      winRate: trader.winRate,
+      totalTrades: trader.totalTrades,
+      activityScore: trader.activityScore,
+    }))
+  );
+
+  return withCopiedByTaskCounts(traders);
+}
+
 export async function getTopPolymarketTraders(limit = 10): Promise<PolymarketTrader[]> {
-  const snapshots = await db.listLeaderboardSnapshots(limit);
-
-  if (snapshots.length > 0) {
-    return snapshots.map((snapshot) => ({
-      address: snapshot.address,
-      displayName: snapshot.displayName || `${snapshot.address.slice(0, 6)}...${snapshot.address.slice(-4)}`,
-      realizedPnl: snapshot.realizedPnl,
-      unrealizedPnl: snapshot.unrealizedPnl,
-      winRate: snapshot.winRate,
-      totalTrades: snapshot.totalTrades,
-      activityScore: snapshot.activityScore,
-      copiedByTasks: 0,
-    }));
+  try {
+    const traders = await refreshLeaderboardSnapshot(Math.max(limit, 10));
+    return traders.slice(0, limit);
+  } catch {
+    const snapshots = await db.listLeaderboardSnapshots(limit);
+    return withCopiedByTaskCounts(
+      snapshots.map((snapshot) => toSnapshotTrader(snapshot, 0))
+    );
   }
-
-  const seeded = [
-    {
-      address: "0x8f3Cf7ad23Cd3CaDbD9735AFf958023239c6A063",
-      displayName: "Election Whale",
-      realizedPnl: 184320,
-      unrealizedPnl: 12540,
-      winRate: 71.4,
-      totalTrades: 148,
-      activityScore: 92,
-      copiedByTasks: 18,
-    },
-    {
-      address: "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174",
-      displayName: "Macro Oracle",
-      realizedPnl: 131940,
-      unrealizedPnl: 8640,
-      winRate: 67.9,
-      totalTrades: 101,
-      activityScore: 88,
-      copiedByTasks: 11,
-    },
-    {
-      address: "0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E",
-      displayName: "News Catalyst",
-      realizedPnl: 97210,
-      unrealizedPnl: 5220,
-      winRate: 63.2,
-      totalTrades: 87,
-      activityScore: 81,
-      copiedByTasks: 7,
-    },
-  ] satisfies PolymarketTrader[];
-
-  return seeded.slice(0, limit);
 }
 
 export async function getTraderActivity(address: string) {

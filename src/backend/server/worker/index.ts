@@ -1,9 +1,9 @@
 import { logError, logInfo } from "@/backend/observability";
 import { runCopytradeWorkerCycle } from "@/backend/services/copytrade/engine";
-import { seedLeaderboardSnapshot } from "@/backend/server/worker/seed";
+import { refreshWorkerLeaderboardSnapshot } from "@/backend/server/worker/seed";
 
 async function main() {
-  await seedLeaderboardSnapshot();
+  await refreshWorkerLeaderboardSnapshot();
   const results = await runCopytradeWorkerCycle();
 
   logInfo("Copytrade worker cycle completed", {

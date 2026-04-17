@@ -58,8 +58,10 @@ DATABASE_URL=file:./dev.db
 POLYMARKET_CLOB_URL=https://clob.polymarket.com
 POLYMARKET_GAMMA_URL=https://gamma-api.polymarket.com
 POLYMARKET_CHAIN_ID=137
-POLYMARKET_PRIVATE_KEY=0x_your_private_key
 POLYMARKET_FUNDER_ADDRESS=0x_your_polymarket_funder
+
+# Secret encryption for cached Polymarket API credentials
+APP_ENCRYPTION_SECRET=change_me_for_local_dev
 
 # Telegram bot (optional)
 TELEGRAM_BOT_TOKEN=your_telegram_bot_token

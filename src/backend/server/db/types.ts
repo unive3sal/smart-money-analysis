@@ -20,6 +20,14 @@ export const WalletAuthType = {
 
 export type WalletAuthType = (typeof WalletAuthType)[keyof typeof WalletAuthType];
 
+export const PolymarketAuthState = {
+  UNAUTHORIZED: "UNAUTHORIZED",
+  AUTHORIZED: "AUTHORIZED",
+  REQUIRES_REAUTH: "REQUIRES_REAUTH",
+} as const;
+
+export type PolymarketAuthState = (typeof PolymarketAuthState)[keyof typeof PolymarketAuthState];
+
 export const TaskStatus = {
   ACTIVE: "ACTIVE",
   PAUSED: "PAUSED",
@@ -80,6 +88,15 @@ export interface WalletConnectionRecord {
   authorizationScope: string | null;
   lastVerifiedAt: string | null;
   metadataJson: string | null;
+  polymarketAuthState: PolymarketAuthState;
+  polymarketApiKeyEncrypted: string | null;
+  polymarketApiSecretEncrypted: string | null;
+  polymarketApiPassphraseEncrypted: string | null;
+  polymarketApiCredsLastDerivedAt: string | null;
+  polymarketApiCredsExpiresAt: string | null;
+  polymarketReauthMessage: string | null;
+  polymarketReauthNonce: number | null;
+  polymarketReauthRequestedAt: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -95,6 +112,12 @@ export interface TradingVaultRecord {
   authType: WalletAuthType;
   status: string;
   metadataJson: string | null;
+  polymarketAuthState: PolymarketAuthState;
+  polymarketApiKeyEncrypted: string | null;
+  polymarketApiSecretEncrypted: string | null;
+  polymarketApiPassphraseEncrypted: string | null;
+  polymarketApiCredsLastDerivedAt: string | null;
+  polymarketApiCredsExpiresAt: string | null;
   createdAt: string;
   updatedAt: string;
 }

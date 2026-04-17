@@ -1,5 +1,7 @@
 import { AnalysisSignal, ExecutionStatus, PositionSide, TaskStatus, WalletChain, db } from "@/backend/server/db/client";
 import { getMarketAnalysis } from "@/backend/services/analysis/marketAnalysis";
+import { listBrokeredExecutions } from "@/backend/services/copytrade/executions";
+import { getTaskExecutionAuthorization } from "@/backend/services/polymarket/auth";
 import { getPolymarketMarket } from "@/backend/services/polymarket/markets";
 import { getTraderActivity, getTopPolymarketTraders } from "@/backend/services/polymarket/traders";
 import type { CopyTradeTaskView } from "@/backend/services/polymarket/types";
@@ -48,7 +50,7 @@ function summarizeTaskPositions(positions: Array<{ realizedPnl: number; unrealiz
   };
 }
 
-function toTaskView(task: {
+async function toTaskView(task: {
   id: string;
   name: string;
   traderAddress: string;
@@ -62,9 +64,17 @@ function toTaskView(task: {
   maxSlippageBps: number;
   lastAutoStopReason: string | null;
   updatedAt: string;
+  walletConnectionId?: string | null;
+  walletConnection?: { id: string; address: string; chain: WalletChain; provider: string; polymarketAuthState?: string | null; polymarketApiKeyEncrypted?: string | null; polymarketApiSecretEncrypted?: string | null; polymarketApiPassphraseEncrypted?: string | null; polymarketApiCredsExpiresAt?: string | null; polymarketApiCredsLastDerivedAt?: string | null; polymarketReauthMessage?: string | null; polymarketReauthRequestedAt?: string | null } | null;
+  tradingVault?: { id: string | null } | null;
   positions: Array<{ realizedPnl: number; unrealizedPnl: number; status: string }>;
-}): CopyTradeTaskView {
+}): Promise<CopyTradeTaskView> {
   const positionSummary = summarizeTaskPositions(task.positions);
+  const executionAuthorization = await getTaskExecutionAuthorization({
+    walletConnectionId: task.walletConnectionId ?? null,
+    walletConnection: task.walletConnection as never,
+    tradingVault: task.tradingVault as never,
+  });
 
   return {
     id: task.id,
@@ -84,6 +94,8 @@ function toTaskView(task: {
     totalPositions: positionSummary.totalPositions,
     openPositions: positionSummary.openPositions,
     lastAutoStopReason: task.lastAutoStopReason,
+    executionAuthorizationReason: executionAuthorization.reason,
+    executionWalletState: executionAuthorization.walletStatus?.state || null,
     updatedAt: task.updatedAt,
   };
 }
@@ -117,7 +129,7 @@ function buildCreateTaskDefaults(input: CreateCopyTradeTaskInput, bootstrappedCu
 export async function listCopyTradeTasks(userId: string) {
   const tasks = await db.listCopyTradeTasks(userId);
 
-  return tasks.map(toTaskView);
+  return Promise.all(tasks.map((task) => toTaskView(task)));
 }
 
 export async function getCopyTradeTask(taskId: string, userId: string) {
@@ -128,8 +140,11 @@ export async function getCopyTradeTask(taskId: string, userId: string) {
   }
 
   return {
-    ...toTaskView(task),
+    ...(await toTaskView(task)),
     executions: task.executions,
+    pendingExecutions: (await listBrokeredExecutions(userId, ExecutionStatus.PENDING)).filter(
+      (execution) => execution.taskId === task.id
+    ),
     walletConnection: task.walletConnection,
     tradingVault: task.tradingVault,
   };
@@ -164,16 +179,38 @@ export async function createCopyTradeTask(input: CreateCopyTradeTaskInput) {
         taskId: task.id,
         marketId: market.marketId,
         tokenId: market.tokenId,
-        traderActivityEventId: null,
+        traderActivityEventId: latestActivity.id,
         side: latestActivity.side === "BUY" ? PositionSide.BUY : PositionSide.SELL,
-        status: ExecutionStatus.SUBMITTED,
+        status: ExecutionStatus.PENDING,
         orderType: "GTC",
         price: latestActivity.price,
         size: latestActivity.size,
-        executedPrice: latestActivity.price,
+        executedPrice: null,
         transactionHash: null,
         rejectionReason: null,
-        metadataJson: JSON.stringify({ source: "bootstrap", traderActivity: latestActivity }),
+        metadataJson: JSON.stringify({
+          source: "bootstrap",
+          traderActivity: latestActivity,
+          preparePayload: {
+            executionId: "bootstrap",
+            taskId: task.id,
+            marketId: market.marketId,
+            tokenId: market.tokenId,
+            side: latestActivity.side,
+            price: latestActivity.price,
+            size: latestActivity.size,
+            orderType: "GTC",
+            walletAddress: task.walletConnectionId || "",
+            funderAddress: task.tradingVaultId || null,
+            expiresAt: null,
+            metadata: {
+              source: "bootstrap",
+              question: market.question,
+              tickSize: market.tickSize,
+              negRisk: market.negRisk,
+            },
+          },
+        }),
       });
     }
   }
@@ -182,6 +219,10 @@ export async function createCopyTradeTask(input: CreateCopyTradeTaskInput) {
 }
 
 export async function updateCopyTradeTaskStatus(taskId: string, userId: string, status: TaskStatus, reason?: string) {
+  if (status === TaskStatus.STOPPED) {
+    await db.cancelPendingExecutionsForTask(taskId, reason || "task_stopped");
+  }
+
   await db.updateCopyTradeTask(taskId, {
     status,
     lastAutoStopReason: reason || null,

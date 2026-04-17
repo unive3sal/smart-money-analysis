@@ -1,5 +1,7 @@
-import { AnalysisSignal, TaskStatus, db } from "@/backend/server/db/client";
+import { AnalysisSignal, ExecutionStatus, PositionSide, TaskStatus, db } from "@/backend/server/db/client";
 import { getMarketAnalysis } from "@/backend/services/analysis/marketAnalysis";
+import { getPolymarketMarket } from "@/backend/services/polymarket/markets";
+import { getTaskExecutionAuthorization } from "@/backend/services/polymarket/auth";
 import { getTraderActivity } from "@/backend/services/polymarket/traders";
 
 function signalMeetsRequirement(signal: string, required: AnalysisSignal | null) {
@@ -53,9 +55,19 @@ export async function runCopytradeWorkerCycle() {
       continue;
     }
 
+    const executionAuthorization = await getTaskExecutionAuthorization(task);
+    if (!executionAuthorization.canExecute) {
+      await db.updateCopyTradeTask(task.id, {
+        lastAutoStopReason: executionAuthorization.reason || "wallet_authorization_required",
+      });
+      results.push({ taskId: task.id, action: "blocked", reason: executionAuthorization.reason || "wallet_authorization_required" });
+      continue;
+    }
+
     const realizedPnl = Math.max(-task.allocationUsd * 0.04, (analysis.currentPrice - 0.5) * task.allocationUsd);
 
     if (task.stopLossPercent && realizedPnl <= -Math.abs(task.stopLossPercent) / 100 * task.allocationUsd) {
+      await db.cancelPendingExecutionsForTask(task.id, "stop_loss");
       await db.updateCopyTradeTask(task.id, {
         status: task.autoStopAfterStopLoss ? TaskStatus.STOPPED : TaskStatus.PAUSED,
         lastAutoStopReason: `Stop-loss triggered at ${task.stopLossPercent}%`,
@@ -66,6 +78,7 @@ export async function runCopytradeWorkerCycle() {
     }
 
     if (task.takeProfitPercent && realizedPnl >= Math.abs(task.takeProfitPercent) / 100 * task.allocationUsd) {
+      await db.cancelPendingExecutionsForTask(task.id, "take_profit");
       await db.updateCopyTradeTask(task.id, {
         status: task.autoStopAfterTakeProfit ? TaskStatus.STOPPED : TaskStatus.PAUSED,
         lastAutoStopReason: `Take-profit triggered at ${task.takeProfitPercent}%`,
@@ -75,12 +88,70 @@ export async function runCopytradeWorkerCycle() {
       continue;
     }
 
+    const existingExecution = await db.findCopyTradeExecutionByTaskAndActivity(task.id, latest.id);
+    if (existingExecution) {
+      await db.updateCopyTradeTask(task.id, {
+        lastProcessedCursor: latest.id,
+        lastAutoStopReason: null,
+      });
+      results.push({ taskId: task.id, action: "already_queued", reason: existingExecution.status.toLowerCase() });
+      continue;
+    }
+
+    const market = await getPolymarketMarket(latest.marketId).catch(() => null);
+    const walletAddress = task.walletConnection?.address || task.tradingVault?.funderAddress || "";
+    const funderAddress = task.tradingVault?.funderAddress || null;
+    const preparePayload = {
+      executionId: `${task.id}:${latest.id}`,
+      taskId: task.id,
+      marketId: latest.marketId,
+      tokenId: latest.tokenId,
+      side: latest.side,
+      price: latest.price,
+      size: latest.size,
+      orderType: "GTC",
+      walletAddress,
+      funderAddress,
+      expiresAt: null,
+      metadata: {
+        copiedTraderAddress: latest.traderAddress,
+        copiedTraderTimestamp: latest.timestamp,
+        analysisSignal: analysis.signal,
+        analysisConfidence: analysis.confidence,
+        question: market?.question || latest.question,
+        tickSize: market?.tickSize || null,
+        negRisk: market?.negRisk ?? false,
+        maxSlippageBps: task.maxSlippageBps,
+      },
+    };
+
+    await db.createCopyTradeExecution({
+      taskId: task.id,
+      marketId: latest.marketId,
+      tokenId: latest.tokenId,
+      traderActivityEventId: latest.id,
+      side: latest.side === "BUY" ? PositionSide.BUY : PositionSide.SELL,
+      status: ExecutionStatus.PENDING,
+      orderType: "GTC",
+      price: latest.price,
+      size: latest.size,
+      executedPrice: null,
+      transactionHash: null,
+      rejectionReason: null,
+      metadataJson: JSON.stringify({
+        source: "worker_queue",
+        traderActivity: latest,
+        analysis,
+        preparePayload,
+      }),
+    });
+
     await db.updateCopyTradeTask(task.id, {
       lastProcessedCursor: latest.id,
       lastAutoStopReason: null,
     });
 
-    results.push({ taskId: task.id, action: "eligible" });
+    results.push({ taskId: task.id, action: "queued" });
   }
 
   return results;
